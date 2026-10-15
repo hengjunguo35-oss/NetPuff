@@ -74,7 +74,7 @@ IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform.startswith("win")
 
 APP_TITLE = "NetPuff"
-APP_VERSION = "1.0.0"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
+APP_VERSION = "1.0.1"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
 USER_AGENT = "%s/%s" % (APP_TITLE, APP_VERSION)
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_history.json")
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_config.json")

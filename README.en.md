@@ -129,6 +129,55 @@ so the RFC 1928 handshake is done over raw sockets. See [TECHNICAL.en.md](TECHNI
 
 ---
 
+## Verification
+
+All checks are reproducible and need no third-party test framework — the zero-dependency
+principle applies to testing too.
+
+**1. Syntax and static checks**
+
+```bash
+python3 -m py_compile src/netpuff.py
+```
+
+**2. Full CLI surface**
+
+Happy and error paths for `status` / `test` / `connect` / `disconnect` / `direct`
+(missing arguments, non-numeric port, out-of-range port, unknown protocol) should all
+return the correct exit codes, with no uncaught traceback.
+
+**3. Protocol end-to-end (local loop, no real proxy needed)**
+
+`tools/` ships two minimal test servers so the client implementation can be verified
+without a real proxy:
+
+```bash
+# Terminal A: minimal SOCKS5 server (no-auth + domain forwarding)
+python3 tools/socks5-test-server.py 11080
+
+# Terminal B: minimal HTTP proxy server (absolute-URI form)
+python3 tools/http-test-server.py 11081
+
+# Terminal C: point NetPuff at them to probe the egress
+python3 src/netpuff.py test 127.0.0.1 11080            # SOCKS5 path
+python3 src/netpuff.py test 127.0.0.1 11081 -p http    # HTTP proxy path
+```
+
+Expected: both return egress IP, geolocation, ISP and latency, and the servers print no errors.
+
+**4. Safety of rewriting user configuration**
+
+`set_terminal_proxy()` / `clear_terminal_proxy()` rewrite `~/.zshrc`. When verifying, point
+`SHELL_RC` at a temporary file and confirm four things: the marker block is written
+correctly, the user's existing content is untouched, repeated writes do not duplicate the
+block, and clearing restores the file exactly.
+
+> Verified on macOS + Python 3.11 (Tk 9.0).
+> The Windows branch has not been fully verified on real hardware — the checks in `tools/`
+> run on Windows too, and results are welcome.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -144,10 +193,13 @@ so the RFC 1928 handshake is done over raw sockets. See [TECHNICAL.en.md](TECHNI
 ## Project layout
 
 ```
-src/netpuff.py        All logic (single file, per-function comments)
-app/启动NetPuff.command    macOS double-click launcher
-app/启动NetPuff.bat        Windows double-click launcher
-app/build-app.sh             Package into NetPuff.app
+src/netpuff.py                All logic (single file, per-function comments)
+app/启动NetPuff.command       macOS double-click launcher
+app/启动NetPuff.bat           Windows double-click launcher
+app/build-app.sh              Package into NetPuff.app
+app/README-Windows.txt        Notes shipped inside the Windows package (incomplete)
+tools/socks5-test-server.py   Minimal SOCKS5 test server (verification)
+tools/http-test-server.py     Minimal HTTP proxy test server (verification)
 ```
 
 ## Privacy

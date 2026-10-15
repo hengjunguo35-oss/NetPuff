@@ -117,6 +117,51 @@ python3 src/netpuff.py direct                  # 查看本机直连出口 IP
 
 ---
 
+## 质量验证
+
+所有验证都不依赖第三方测试框架（零依赖原则同样适用于测试），可自行复现。
+
+**1. 语法与静态检查**
+
+```bash
+python3 -m py_compile src/netpuff.py
+```
+
+**2. 命令行全路径**
+
+`status` / `test` / `connect` / `disconnect` / `direct` 的正常与异常路径
+（缺参数、非数字端口、超范围端口、未知协议）都应返回正确退出码，
+且不出现未捕获的 traceback。
+
+**3. 协议端到端（本地闭环，无需真实代理）**
+
+`tools/` 下有两个最小测试服务端，用于在没有真实代理时验证客户端实现：
+
+```bash
+# 终端 A：最小 SOCKS5 服务端（无认证 + 域名转发）
+python3 tools/socks5-test-server.py 11080
+
+# 终端 B：最小 HTTP 代理服务端（绝对 URI 形式）
+python3 tools/http-test-server.py 11081
+
+# 终端 C：让 NetPuff 走它们探测出口
+python3 src/netpuff.py test 127.0.0.1 11080            # SOCKS5 路径
+python3 src/netpuff.py test 127.0.0.1 11081 -p http    # HTTP 代理路径
+```
+
+预期：两条都返回出口 IP、地理位置、ISP 与时延；服务端不打印任何错误。
+
+**4. 改写用户配置的安全性**
+
+`set_terminal_proxy()` / `clear_terminal_proxy()` 会改写 `~/.zshrc`。验证时请把
+`SHELL_RC` 指向临时文件，确认四点：标记块写入正确、用户原有内容零改动、
+重复写入不产生重复块、清除后可完全还原。
+
+> 已验证环境：macOS + Python 3.11（Tk 9.0）。
+> Windows 分支尚未充分实机验证——`tools/` 里的测试同样可在 Windows 上运行，欢迎补充结果。
+
+---
+
 ## 排错
 
 | 现象 | 处理 |
@@ -132,10 +177,13 @@ python3 src/netpuff.py direct                  # 查看本机直连出口 IP
 ## 目录结构
 
 ```
-src/netpuff.py        全部逻辑（单文件，逐函数带批注）
-app/启动NetPuff.command    macOS 双击启动脚本
-app/启动NetPuff.bat        Windows 双击启动脚本
+src/netpuff.py                全部逻辑（单文件，逐函数带批注）
+app/启动NetPuff.command        macOS 双击启动脚本
+app/启动NetPuff.bat            Windows 双击启动脚本
 app/build-app.sh              打包成 NetPuff.app
+app/README-Windows.txt        Windows 发行包内说明（功能未完善）
+tools/socks5-test-server.py   最小 SOCKS5 测试服务端（验证用）
+tools/http-test-server.py     最小 HTTP 代理测试服务端（验证用）
 ```
 
 ## 隐私

@@ -289,13 +289,19 @@ NetPuff/
 ├── 免责声明.md / DISCLAIMER.en.md         disclaimer & terms (zh / en)
 ├── LICENSE                               MIT
 ├── CHANGELOG.md / CHANGELOG.en.md        changelog (zh / en)
+├── .github/
+│   ├── workflows/release.yml             build & publish releases on v* tags
+│   └── release-notes.md                  release notes (zh / en)
 ├── src/
 │   └── netpuff.py                 all logic (single file, per-function comments)
 ├── app/
 │   ├── 启动NetPuff.command            macOS double-click launcher
 │   ├── 启动NetPuff.bat                Windows double-click launcher
-│   └── build-app.sh                      package into NetPuff.app
-└── docs/                                 demo images (optional)
+│   ├── build-app.sh                      package into NetPuff.app
+│   └── README-Windows.txt            notes shipped inside the Windows package
+└── tools/
+    ├── socks5-test-server.py        minimal SOCKS5 test server (verification)
+    └── http-test-server.py          minimal HTTP proxy test server (verification)
 ```
 
 ### Suggested reading order

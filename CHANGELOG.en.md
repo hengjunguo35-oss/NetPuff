@@ -7,6 +7,23 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.0.1] — 2026-10-15
+
+Packaging and documentation improvements (**no functional changes**).
+
+- Added a macOS **`.dmg`** alongside the existing `.zip`, matching the usual macOS install
+  experience: it contains `NetPuff.app` plus a shortcut to `/Applications`
+- Added a **Windows package**: **not yet complete, not recommended for daily use**. It is
+  provided so that contributors can unzip, run, patch, and submit changes
+  (see `README-Windows.txt` inside the package)
+- Release notes now cover both macOS and Windows, in Chinese and English, and explicitly
+  mark Windows as incomplete
+- README gained a "Verification" section documenting reproducible checks and their results
+- Added a **non-blocking** Windows smoke test (syntax, CLI, registry read path, `.bat` line
+  endings)
+
+---
+
 ## [1.0.0] — 2026-10-14
 
 First stable release.
