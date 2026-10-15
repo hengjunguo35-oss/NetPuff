@@ -25,18 +25,6 @@ correctly.
 
 ---
 
-## Why
-
-I have an internal proxy, but switching it on always meant manually editing the system
-SOCKS5 settings — and the IP keeps changing when I change networks.
-
-Worse, once set, the system settings never tell you whether it actually connected, where
-the egress is, or whether you're still silently going direct.
-
-So I wrote my own: fill in the address → verify → switch, with the egress IP shown clearly.
-
----
-
 ## Features
 
 | Feature | Notes |

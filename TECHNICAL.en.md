@@ -9,16 +9,6 @@ The Chinese version is authoritative.</sub>
 
 ---
 
-## Why
-
-I have an internal SOCKS5 proxy, but using it always meant manually editing the system
-proxy settings — and the IP changes whenever I change networks. And once set, the system
-settings never tell you whether it actually connected or where the egress is.
-
-So I wrote my own: fill in the address → verify → switch, with the egress IP shown clearly.
-
----
-
 ## 1. What problem this solves
 
 **Input**: a proxy server address (IP + port + protocol).
