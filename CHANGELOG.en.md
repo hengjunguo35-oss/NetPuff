@@ -7,6 +7,23 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.0.2] — 2026-10-15
+
+Fixed a Windows output-encoding crash and split CI into its own workflow.
+
+- **Fixed**: on Windows, console or redirected output encoding is usually not UTF-8
+  (e.g. CP1252 / CP936), so printing Chinese raised `UnicodeEncodeError` and crashed the
+  CLI (for example `python netpuff.py status > out.txt`). stdout/stderr are now switched
+  to UTF-8 at startup, with unencodable characters replaced.
+- Added `ci.yml`: runs smoke checks on **both macOS and Windows** for pushes to main and
+  pull requests (syntax, version consistency, CLI, protocol end-to-end, `.bat` line
+  endings). Windows steps use bash throughout, avoiding false "every step failed" results
+  caused by PowerShell quoting and encoding differences.
+- Slimmed `release.yml` down to building and publishing on tags; the Windows checks moved
+  into `ci.yml`.
+
+---
+
 ## [1.0.1] — 2026-10-15
 
 Packaging and documentation improvements (**no functional changes**).

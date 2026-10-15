@@ -7,6 +7,21 @@
 
 ---
 
+## [1.0.2] — 2026-10-15
+
+修复 Windows 输出编码导致的崩溃，并把 CI 拆分为独立工作流。
+
+- **修复**：Windows 上控制台或「被重定向的输出」编码通常不是 UTF-8
+  （如 CP1252 / CP936），此前 `print` 中文会抛 `UnicodeEncodeError`
+  直接导致 CLI 崩溃（例如 `python netpuff.py status > out.txt`）。
+  现在启动时统一把 stdout / stderr 切到 UTF-8，并把无法编码的字符替换掉。
+- 新增 `ci.yml`：推 main 或提 PR 时在 **macOS 与 Windows 两个平台**运行冒烟检查
+  （语法、版本号一致性、CLI、协议端到端、`.bat` 行尾）。Windows 步骤统一使用
+  bash，避免 PowerShell 引号转义与编码差异造成的「步骤全挂但代码没问题」。
+- `release.yml` 精简为只负责打 tag 时的构建与发布，Windows 检查移入 `ci.yml`。
+
+---
+
 ## [1.0.1] — 2026-10-15
 
 发行工程与文档改进（**程序功能无变化**）。

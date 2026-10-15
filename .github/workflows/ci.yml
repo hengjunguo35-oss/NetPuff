@@ -1,0 +1,64 @@
+name: CI
+
+# 推送到 main 或提 PR 时运行冒烟检查，macOS 与 Windows 都会跑。
+#
+# 设计说明：所有步骤统一用 bash（windows-latest 自带 Git Bash）。
+# 不用 PowerShell 的原因：其引号转义规则（\" 不是转义）与脚本编码处理
+# 与 bash 差异较大，容易产生「步骤全挂但代码没问题」的假失败。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: 冒烟检查 · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false          # 两个平台都跑完，便于对比
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 语法检查
+        shell: bash
+        run: |
+          python -m py_compile src/netpuff.py \
+            tools/socks5-test-server.py tools/http-test-server.py
+          echo "语法 OK"
+
+      - name: 校验 APP_VERSION 与 CHANGELOG 一致
+        shell: bash
+        run: |
+          V="$(sed -n 's/^APP_VERSION = "\(.*\)".*/\1/p' src/netpuff.py)"
+          echo "APP_VERSION = $V"
+          grep -q "## \[$V\]" CHANGELOG.md    || { echo "CHANGELOG.md 缺少 $V 条目"; exit 1; }
+          grep -q "## \[$V\]" CHANGELOG.en.md || { echo "CHANGELOG.en.md 缺少 $V 条目"; exit 1; }
+
+      - name: CLI 冒烟检查
+        shell: bash
+        run: |
+          python src/netpuff.py --help
+          python src/netpuff.py status
+
+      - name: 协议端到端（本地闭环，无需真实代理）
+        shell: bash
+        run: |
+          python tools/socks5-test-server.py 11080 &
+          python tools/http-test-server.py 11081 &
+          sleep 2
+          python src/netpuff.py test 127.0.0.1 11080
+          python src/netpuff.py test 127.0.0.1 11081 -p http
+
+      - name: 批处理文件行尾必须为 CRLF
+        shell: bash
+        run: |
+          python -c "import glob; d=open(glob.glob('app/*.bat')[0],'rb').read(); c=d.count(b'\r\n'); b=d.count(b'\n')-c; print('CRLF=%d bareLF=%d' % (c, b)); assert b == 0, 'batch file has bare LF line endings'"

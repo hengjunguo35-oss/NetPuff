@@ -2,6 +2,7 @@ name: Release
 
 # 推一个 v* 的 tag 即自动构建 macOS / Windows 发行包并发布。
 # 使用仓库自带的 GITHUB_TOKEN，无需任何额外密钥。
+# 冒烟检查（含真实 Windows 环境）在 ci.yml 中，推 main 或提 PR 时即会运行。
 on:
   push:
     tags:
@@ -91,49 +92,3 @@ jobs:
               --title "NetPuff $V" \
               --notes-file .github/release-notes.md
           fi
-
-  # Windows 目前无法在 macOS 上做功能验证，这里补一个真实 Windows 环境的冒烟检查。
-  # 标为 continue-on-error：结果仅供参考，绝不阻塞发行。
-  windows-smoke:
-    name: Windows 冒烟检查（不阻塞发布）
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 安装 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: 语法与版本号检查
-        shell: pwsh
-        run: |
-          python -c "import ast; ast.parse(open('src/netpuff.py', encoding='utf-8').read()); print('语法 OK')"
-          python -c "import re; s = open('src/netpuff.py', encoding='utf-8').read(); print('APP_VERSION =', re.search(r'APP_VERSION = \"([^\"]+)\"', s).group(1))"
-
-      - name: CLI 冒烟检查（--help / direct）
-        shell: pwsh
-        run: |
-          python src/netpuff.py --help
-          python src/netpuff.py direct
-
-      - name: 验证 Windows 注册表读取路径（只读，不改系统设置）
-        shell: pwsh
-        run: python src/netpuff.py status
-
-      - name: 验证 .bat 行尾为 CRLF
-        shell: pwsh
-        run: |
-          $bytes = [IO.File]::ReadAllBytes("app/启动NetPuff.bat")
-          $crlf = 0
-          for ($i = 0; $i -lt $bytes.Length - 1; $i++) {
-            if ($bytes[$i] -eq 13 -and $bytes[$i + 1] -eq 10) { $crlf++ }
-          }
-          $lfTotal = ($bytes | Where-Object { $_ -eq 10 }).Count
-          $bareLf = $lfTotal - $crlf
-          Write-Host "CRLF=$crlf  纯LF=$bareLf"
-          if ($bareLf -ne 0) {
-            throw "批处理文件含 $bareLf 个纯 LF 行尾，Windows 下可能解析异常"
-          }

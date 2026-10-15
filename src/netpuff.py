@@ -70,11 +70,20 @@ import threading
 import time
 import urllib.parse
 
+# Windows 上控制台或「被重定向的输出」编码往往不是 UTF-8（例如 CP1252 / CP936），
+# 此时 print 中文会抛 UnicodeEncodeError 直接崩掉 CLI。这里统一把 stdout/stderr
+# 切到 UTF-8，并把无法编码的字符替换掉，保证输出编码永远不会导致程序崩溃。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform.startswith("win")
 
 APP_TITLE = "NetPuff"
-APP_VERSION = "1.0.1"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
+APP_VERSION = "1.0.2"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
 USER_AGENT = "%s/%s" % (APP_TITLE, APP_VERSION)
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_history.json")
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_config.json")
