@@ -1,0 +1,23 @@
+# 统一行尾与文本判定，避免跨平台协作时被自动转换破坏文件。
+# 详见 https://git-scm.com/docs/gitattributes
+
+# 默认：文本文件在仓库内统一存为 LF，检出时也按 LF
+* text=auto eol=lf
+
+# Windows 批处理必须用 CRLF —— 用 LF 行尾时 cmd.exe 的 if(...) 括号块、
+# goto 标签等构造可能出错。这条保证 Windows 用户检出时拿到 CRLF。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 明确声明二进制文件，禁止任何行尾/编码转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.icns binary
+*.dmg  binary
+*.zip  binary
+
+# 这些是构建产物，正常不入库（见 .gitignore），此处仅作兜底声明
+*.app  binary
