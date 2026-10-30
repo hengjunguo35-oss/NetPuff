@@ -76,7 +76,41 @@ jobs:
           shasum -a 256 NetPuff-*.zip NetPuff-*.dmg > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: 创建 Release 并上传全部产物
+      - name: 组织发行说明（把本版 CHANGELOG 段落放到最前面）
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 从两个 CHANGELOG 里抽出「当前版本」那一段：
+          # 从 "## [V]" 开始，到第一条 --- 分隔线为止（分隔线本身去掉）。
+          extract() {
+            sed -n "/^## \[$V\]/,/^---\$/p" "$1" | sed '$d' | tail -n +2
+          }
+          ZH="$(extract CHANGELOG.md)"
+          EN="$(extract CHANGELOG.en.md)"
+          if [ -z "$(printf '%s' "$ZH" | tr -d '[:space:]')" ]; then
+            echo "::warning::CHANGELOG.md 中找不到 $V 的条目"
+            ZH="（CHANGELOG.md 中未找到 $V 的条目）"
+          fi
+          {
+            echo "## 本次更新 · What's new in $V"
+            echo
+            printf '%s\n' "$ZH"
+            echo
+            echo "<details><summary>English</summary>"
+            echo
+            printf '%s\n' "$EN"
+            echo
+            echo "</details>"
+            echo
+            echo "---"
+            echo
+            cat .github/release-notes.md
+          } > RELEASE_NOTES.md
+          echo "--- 发行说明开头 22 行 ---"
+          head -22 RELEASE_NOTES.md
+
+      - name: 创建或更新 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
@@ -85,10 +119,11 @@ jobs:
           set -euo pipefail
           FILES="$(ls NetPuff-*.zip NetPuff-*.dmg SHA256SUMS.txt)"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，改为追加/覆盖产物"
+            echo "Release $TAG 已存在：覆盖产物并刷新说明"
             gh release upload "$TAG" $FILES --clobber
+            gh release edit "$TAG" --notes-file RELEASE_NOTES.md
           else
             gh release create "$TAG" $FILES \
               --title "NetPuff $V" \
-              --notes-file .github/release-notes.md
+              --notes-file RELEASE_NOTES.md
           fi
