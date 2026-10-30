@@ -8,7 +8,8 @@
 #  也无需 pip install 任何东西。
 #
 #  用法：
-#     ./app/build-app.sh
+#     ./app/build-app.sh            → 产物放在项目根目录（CI 依赖这个默认值）
+#     ./app/build-app.sh dist       → 产物收进 dist/，保持根目录整洁
 #
 #  说明：本脚本只做「组装」，不做编译（Python 是解释型，无需编译）。
 # ============================================================================
@@ -16,8 +17,18 @@ set -euo pipefail
 
 # 定位项目根目录（本脚本位于 <root>/app/ 下）
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/NetPuff.app"
 SRC="$ROOT/src/netpuff.py"
+
+# 输出目录：默认项目根目录；也可传一个目录（相对路径按项目根目录解析），
+# 把构建产物收进 dist/ 之类的地方，避免根目录堆满 .app 与压缩包。
+OUT="${1:-.}"
+case "$OUT" in
+  /*) ;;                      # 绝对路径，原样使用
+  .)  OUT="$ROOT" ;;          # 默认：项目根目录（CI 依赖这个默认值）
+  *)  OUT="$ROOT/$OUT" ;;     # 相对路径按项目根目录解析
+esac
+mkdir -p "$OUT"
+APP="$OUT/NetPuff.app"
 
 # 版本号从源码的 APP_VERSION 读取，保持「唯一来源」，避免与 CHANGELOG 不一致
 VERSION="$(sed -n 's/^APP_VERSION = "\(.*\)".*/\1/p' "$SRC")"

@@ -255,7 +255,8 @@ When installing Python, **make sure tcl/tk is included**:
 ### 4.2 Package a double-clickable .app (macOS)
 
 ```bash
-./app/build-app.sh
+./app/build-app.sh              # output into the project root (CI uses this)
+./app/build-app.sh dist         # or into dist/ to keep the root tidy
 ```
 
 The output is a self-contained `NetPuff.app` — a zsh launcher plus the embedded
