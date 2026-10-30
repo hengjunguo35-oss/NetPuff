@@ -76,39 +76,19 @@ jobs:
           shasum -a 256 NetPuff-*.zip NetPuff-*.dmg > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: 组织发行说明（把本版 CHANGELOG 段落放到最前面）
+      - name: 组织发行说明（替换 VERSION 占位符）
         env:
           V: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          # 从两个 CHANGELOG 里抽出「当前版本」那一段：
-          # 从 "## [V]" 开始，到第一条 --- 分隔线为止（分隔线本身去掉）。
-          extract() {
-            sed -n "/^## \[$V\]/,/^---\$/p" "$1" | sed '$d' | tail -n +2
-          }
-          ZH="$(extract CHANGELOG.md)"
-          EN="$(extract CHANGELOG.en.md)"
-          if [ -z "$(printf '%s' "$ZH" | tr -d '[:space:]')" ]; then
-            echo "::warning::CHANGELOG.md 中找不到 $V 的条目"
-            ZH="（CHANGELOG.md 中未找到 $V 的条目）"
+          # 发行说明里的 {{VERSION}} 换成实际版本号，这样同一个文件可以跨版本复用，
+          # 不会出现「v1.0.2 的正文里资产名还写着 1.0.1」这类过期问题。
+          sed "s/{{VERSION}}/$V/g" .github/release-notes.md > RELEASE_NOTES.md
+          if grep -q '{{VERSION}}' RELEASE_NOTES.md; then
+            echo "::warning::RELEASE_NOTES.md 中仍有未替换的占位符"
           fi
-          {
-            echo "## 本次更新 · What's new in $V"
-            echo
-            printf '%s\n' "$ZH"
-            echo
-            echo "<details><summary>English</summary>"
-            echo
-            printf '%s\n' "$EN"
-            echo
-            echo "</details>"
-            echo
-            echo "---"
-            echo
-            cat .github/release-notes.md
-          } > RELEASE_NOTES.md
-          echo "--- 发行说明开头 22 行 ---"
-          head -22 RELEASE_NOTES.md
+          echo "--- 发行说明开头 12 行 ---"
+          head -12 RELEASE_NOTES.md
 
       - name: 创建或更新 Release
         env:
@@ -119,8 +99,15 @@ jobs:
           set -euo pipefail
           FILES="$(ls NetPuff-*.zip NetPuff-*.dmg SHA256SUMS.txt)"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在：覆盖产物并刷新说明"
-            gh release upload "$TAG" $FILES --clobber
+            # 已存在：只在还没有产物时补传。重跑工作流通常只是为了刷新说明，
+            # 若连产物一起覆盖，已经发布出去的 SHA256 校验和就会被无声改掉。
+            HAVE="$(gh release view "$TAG" --json assets -q '.assets | length')"
+            if [ "$HAVE" = "0" ]; then
+              echo "产物为空，上传"
+              gh release upload "$TAG" $FILES --clobber
+            else
+              echo "产物已存在（$HAVE 个），跳过上传以保持校验和不变"
+            fi
             gh release edit "$TAG" --notes-file RELEASE_NOTES.md
           else
             gh release create "$TAG" $FILES \

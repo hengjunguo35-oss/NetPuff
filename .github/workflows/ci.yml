@@ -62,3 +62,31 @@ jobs:
         shell: bash
         run: |
           python -c "import glob; d=open(glob.glob('app/*.bat')[0],'rb').read(); c=d.count(b'\r\n'); b=d.count(b'\n')-c; print('CRLF=%d bareLF=%d' % (c, b)); assert b == 0, 'batch file has bare LF line endings'"
+
+  sync-release-notes:
+    name: 同步发行说明
+    # 推 main 时，如果当前版本已经发布过，就把仓库里的发行说明同步到发行页。
+    # 这样重写说明不需要重新推 tag，也不会触发产物重建、不会改掉已发布的校验和。
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 刷新已发布版本的发行说明
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="$(sed -n 's/^APP_VERSION = "\(.*\)".*/\1/p' src/netpuff.py)"
+          TAG="v$V"
+          echo "当前版本：$V（tag：$TAG）"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "该版本尚未发布，无需同步"
+            exit 0
+          fi
+          sed "s/{{VERSION}}/$V/g" .github/release-notes.md > /tmp/notes.md
+          gh release edit "$TAG" --notes-file /tmp/notes.md
+          echo "已刷新 $TAG 的发行说明"
