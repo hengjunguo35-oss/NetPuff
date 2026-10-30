@@ -7,6 +7,32 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.0] — 2026-10-30
+
+Added quit protection and startup auto-detection, so the proxy never stays enabled
+without you knowing.
+
+- **Quit protection**: closing the window while the system proxy is still on now raises a
+  **native system dialog** offering "restore and quit" / "quit only" / "cancel". Restoring
+  clears both the system proxy and the terminal proxy before exiting; if the proxy is
+  already off, you are not bothered. On macOS, Cmd+Q is intercepted too — otherwise the
+  shortcut would bypass the confirmation.
+- **Startup auto-detection**: on launch the app scans the system proxy configuration. If a
+  proxy is still active it immediately switches the status bar to "⚠ proxying", fills in
+  the detected address, and probes the egress asynchronously; the
+  "cancel proxy / restore direct" button disables it in one click. This covers the
+  "I chose quit-only last time and now want to turn the proxy off" case.
+- The close decision is based on the **actual system state**, not a cached in-memory flag,
+  so toggling the proxy outside the app is detected correctly.
+- Status-bar text is now truncated with an ellipsis instead of being silently clipped.
+- `get_proxy_detail()`: new helper that reads the system proxy protocol/address/port for
+  startup detection and egress probing (on Windows it parses multi-protocol `ProxyServer`
+  maps, preferring socks > http > https).
+- Fixed: the macOS dialog script wrongly used `with icon caution` (a `display dialog`
+  parameter), which made `display alert` fail to compile; now uses `as warning`.
+
+---
+
 ## [1.0.2] — 2026-10-15
 
 Fixed a Windows output-encoding crash and split CI into its own workflow.

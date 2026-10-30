@@ -83,7 +83,7 @@ IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform.startswith("win")
 
 APP_TITLE = "NetPuff"
-APP_VERSION = "1.0.2"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
+APP_VERSION = "1.1.0"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
 USER_AGENT = "%s/%s" % (APP_TITLE, APP_VERSION)
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_history.json")
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_config.json")
@@ -515,6 +515,98 @@ def get_proxy_status():
     return (False, "")
 
 
+def get_proxy_detail():
+    """读取系统代理的**详细**配置，供 GUI 启动时「自动识别当前是否在代理」。
+
+    与 get_proxy_status() 的分工：
+      * get_proxy_status() 只回答「开没开 + 服务器是谁」，给 CLI 的 status 用；
+      * 本函数额外返回**协议与端口**，这样 GUI 才能把检测到的地址回填进表单，
+        并直接拿 host/port 去探测出口，确认「流量到底从哪出去」。
+
+    返回 dict（未开启时 enabled 为 False）：
+        {"enabled", "protocol", "host", "port", "service"}
+    """
+    out = {"enabled": False, "protocol": None, "host": "", "port": "", "service": ""}
+
+    if IS_MAC:
+        svc = mac_primary_service()
+        out["service"] = svc
+        probes = (
+            ("socks5", "-getsocksfirewallproxy"),
+            ("http", "-getwebproxy"),
+            ("https", "-getsecurewebproxy"),
+        )
+        for protocol, flag in probes:
+            r = subprocess.run(["networksetup", flag, svc],
+                               capture_output=True, text=True).stdout
+            fields = {}
+            for line in r.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    fields[k.strip()] = v.strip()
+            if fields.get("Enabled") != "Yes":
+                continue
+            out.update({"enabled": True, "protocol": protocol,
+                        "host": fields.get("Server", ""),
+                        "port": fields.get("Port", "")})
+            break   # 三个开关通常指向同一地址，取第一个开启的即可
+        return out
+
+    if IS_WIN:
+        import winreg
+        path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        enabled = False
+        server = ""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ)
+            try:
+                enabled = bool(winreg.QueryValueEx(key, "ProxyEnable")[0])
+                server = winreg.QueryValueEx(key, "ProxyServer")[0] or ""
+            finally:
+                winreg.CloseKey(key)
+        except OSError:
+            return out
+        if not enabled:
+            return out
+
+        # ProxyServer 形如 "host:port"、"socks=host:port"，或以分号分隔的多协议
+        # 映射（"http=h:p;https=h:p"）。按 socks > http > https 取优先级最高的：
+        # 三种都能证明「当前在走代理」，但探测出口时 socks 最直接，http 次之
+        # （https 需要先对代理本身做一次 TLS）。
+        rank_of = {"socks": 0, "socks5": 0, "http": 1, "https": 2}
+        best = None                     # (rank, scheme, addr)
+        for part in str(server).split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            scheme, _, addr = part.partition("=")
+            if not addr:
+                scheme, addr = "", part
+            scheme = scheme.strip().lower() or "socks"
+            rank = rank_of.get(scheme, 3)
+            if best is None or rank < best[0]:
+                best = (rank, scheme, addr.strip())
+        chosen = (best[1], best[2]) if best else None
+        out["service"] = "Windows 注册表"
+        if chosen:
+            scheme, addr = chosen
+            host, _, port = addr.rpartition(":")
+            if not host:                 # 没有冒号说明只给了 host
+                host, port = addr, ""
+            out.update({
+                "enabled": True,
+                "protocol": "socks5" if scheme in ("socks", "socks5")
+                            else ("https" if scheme == "https" else "http"),
+                "host": host,
+                "port": port,
+            })
+        else:
+            out["enabled"] = True
+        return out
+
+    return out
+
+
 def _win_refresh():
     """通知 Windows 的 Wininet「代理设置变了，立即刷新」。
 
@@ -716,6 +808,111 @@ def cli():
 # ======================================================================
 # 图形界面
 # ======================================================================
+# ======================================================================
+# 「系统代理仍开启」时的退出确认框
+# ======================================================================
+QUIT_RESTORE = "restore"    # 恢复直连后再退出
+QUIT_ONLY = "quit"          # 仅退出软件，保留代理
+QUIT_CANCEL = "cancel"      # 不退出
+
+
+def _osa(text):
+    """转义 AppleScript 双引号字符串里的特殊字符。"""
+    return str(text).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _ask_quit_macos(desc):
+    """macOS 原生对话框。返回 QUIT_* 之一；无法显示时返回 None（交给回退）。"""
+    title = "NetPuff — 系统代理仍在开启"
+    msg = ("当前系统代理仍指向 %s。\n\n"
+           "直接退出不会自动还原为直连，代理会继续生效。\n"
+           "是否在退出前恢复直连？\n\n"
+           "The system proxy is still on. Restore direct connection before quitting?"
+           % desc)
+    b_restore, b_quit, b_cancel = "恢复直连并退出", "仅退出软件", "取消"
+    try:
+        # 注意参数顺序与关键字：display alert 用 `as warning` 表示感叹号图标，
+        # 而 `with icon caution` 属于 display dialog，用在 alert 上会编译报错。
+        script = (
+            'display alert "%s" message "%s" as warning '
+            'buttons {"%s", "%s", "%s"} '
+            'default button "%s" cancel button "%s"'
+            % (_osa(title), _osa(msg), _osa(b_cancel), _osa(b_quit),
+               _osa(b_restore), _osa(b_restore), _osa(b_cancel))
+        )
+        r = subprocess.run(["osascript", "-e", script],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode == 0:
+            got = (r.stdout or "").strip()
+            # osascript 可能只输出按钮文本，也可能输出
+            # "button returned:恢复直连并退出"，因此用包含判断而非相等判断。
+            if b_restore in got:
+                return QUIT_RESTORE
+            if b_quit in got:
+                return QUIT_ONLY
+            # 输出既不是「恢复」也不是「仅退出」——说明 osascript 的输出格式
+            # 与预期不同。此时不要静默把用户留在原地，交给 Tk 回退对话框再问一次。
+            return None
+        err = r.stderr or ""
+        if "User canceled" in err or "-128" in err:
+            return QUIT_CANCEL          # 用户按 Esc，或点了「取消」
+        return None                     # osascript 本身出错 → 让调用方回退
+    except Exception:
+        return None
+
+
+def _ask_quit_windows(desc):
+    """Windows 原生 MessageBox。返回 QUIT_* 之一；无法显示时返回 None。"""
+    title = "NetPuff — 系统代理仍在开启"
+    msg = ("当前系统代理仍指向 %s。\n\n"
+           "直接退出不会自动还原为直连，代理会继续生效。\n\n"
+           "【是】恢复直连后退出\n"
+           "【否】仅退出软件，保留代理\n"
+           "【取消】不退出" % desc)
+    try:
+        import ctypes
+        MB_YESNOCANCEL = 0x03
+        MB_ICONWARNING = 0x30
+        MB_SETFOREGROUND = 0x10000
+        ret = ctypes.windll.user32.MessageBoxW(
+            0, msg, title, MB_YESNOCANCEL | MB_ICONWARNING | MB_SETFOREGROUND)
+        return {6: QUIT_RESTORE, 7: QUIT_ONLY, 2: QUIT_CANCEL}.get(ret)
+    except Exception:
+        return None
+
+
+def _ask_quit_tk(desc):
+    """回退方案：Tk 自带对话框（只有 是/否 两个选项）。"""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        ans = messagebox.askyesno(
+            "NetPuff — 系统代理仍在开启",
+            ("当前系统代理仍指向 %s。\n\n"
+             "直接退出不会自动还原为直连，代理会继续生效。\n\n"
+             "是 = 恢复直连后退出\n否 = 仅退出软件，保留代理" % desc),
+            parent=getattr(tk, "_default_root", None),
+            default="yes", icon="warning")
+        return QUIT_RESTORE if ans else QUIT_ONLY
+    except Exception:
+        return QUIT_CANCEL
+
+
+def ask_quit_with_proxy(desc):
+    """「系统代理仍开启」时关闭窗口，询问用户如何处理。
+
+    返回 QUIT_RESTORE / QUIT_ONLY / QUIT_CANCEL。
+    优先使用系统原生对话框（用户要求「系统级提示框」）；原生不可用时回退到 Tk。
+    """
+    if IS_MAC:
+        got = _ask_quit_macos(desc)
+    elif IS_WIN:
+        got = _ask_quit_windows(desc)
+    else:
+        got = None
+    return got if got is not None else _ask_quit_tk(desc)
+
+
 def build_gui():
     import tkinter as tk
     from tkinter import ttk
@@ -725,7 +922,8 @@ def build_gui():
     root.geometry("500x565")
     root.minsize(470, 535)
 
-    state = {"info": None, "working": False, "connecting": False}
+    state = {"info": None, "working": False, "connecting": False,
+             "proxy_active": False, "detected": False}
     msg_q = queue.Queue()
 
     style = ttk.Style()
@@ -817,6 +1015,11 @@ def build_gui():
 
     # ==================================================================
     def set_status(text, color="#888888"):
+        # 状态区是单行，超出宽度会被无声裁切；这里主动截断并加省略号，
+        # 免得「可点下方按钮关闭」这类关键提示正好落在被切掉的部分。
+        text = str(text)
+        if len(text) > 40:
+            text = text[:39] + "…"
         status_var.set(text)
         status_label.config(fg=color)
 
@@ -874,6 +1077,7 @@ def build_gui():
         state["connecting"] = False
         state["working"] = False
         state["info"] = info
+        state["proxy_active"] = True
         connect_btn.config(state="normal")
         detail_btn.config(state="normal")
         suffix = " · 终端代理已开启" if terminal else ""
@@ -934,6 +1138,7 @@ def build_gui():
         state["working"] = False
         state["connecting"] = False
         state["info"] = None
+        state["proxy_active"] = False
         detail_btn.config(state="disabled")
         cancel_btn.config(state="normal")
         set_status("✓ 已恢复直连 · %s" % summary, "#1a8f3c")
@@ -956,6 +1161,99 @@ def build_gui():
         set_status("正在取消代理…", "#0066cc")
         threading.Thread(target=_run_cancel, daemon=True).start()
 
+    # ---- 启动时自动识别：系统代理是否仍然开着 ----
+    # 典型场景：上次选了「仅退出软件」，代理还留在系统里；用户这次重新打开
+    # 软件就是为了把它关掉。所以一进来就扫描网络配置，直接告诉你「现在还在
+    # 代理」，并把「取消代理 / 恢复直连」按钮准备好。
+    def _startup_detect():
+        try:
+            detail = get_proxy_detail()
+        except Exception:
+            detail = {"enabled": False}
+        msg_q.put(("detected_state", detail))
+
+    def _run_detect_egress(host, port, scheme):
+        try:
+            info = fetch_exit_info(host, port, scheme)
+            msg_q.put(("detected_ok", info))
+        except Exception as e:
+            msg_q.put(("detected_fail", str(e)))
+
+    def _apply_detected(detail):
+        if not detail.get("enabled"):
+            return
+        state["proxy_active"] = True
+        state["detected"] = True
+        host = str(detail.get("host") or "")
+        port = str(detail.get("port") or "")
+        proto = detail.get("protocol") or "socks5"
+        # 回填表单：让用户看清当前用的是哪个地址，也方便直接重连 / 看详情
+        if host:
+            ip_var.set(host)
+        if port:
+            port_var.set(port)
+        if proto in PROTOCOLS:
+            scheme_var.set(proto)
+        cancel_btn.config(state="normal")
+        if host and port:
+            set_status("⚠ 检测到系统代理仍开启 · %s:%s" % (host, port), "#cc6600")
+            threading.Thread(target=_run_detect_egress,
+                             args=(host, port, proto), daemon=True).start()
+        else:
+            set_status("⚠ 检测到系统代理仍开启 · 可点下方按钮关闭", "#cc6600")
+
+    def _detected_ok(info):
+        state["info"] = info
+        state["proxy_active"] = True
+        detail_btn.config(state="normal")
+        cancel_btn.config(state="normal")
+        set_status("⚠ 正在代理 · 出口 %s · %s %s" % (
+            info.get("ip", ""), info.get("country", ""), info.get("city", "")), "#cc6600")
+
+    def _detected_fail(_msg):
+        cancel_btn.config(state="normal")
+        set_status("⚠ 系统代理仍开启 · 探测失败 · 可点下方按钮关闭", "#cc0000")
+
+    # ---- 关闭窗口：如果代理还开着，先问一句 ----
+    def _restore_now():
+        """退出前同步恢复直连（不走队列，因为马上要销毁窗口）。"""
+        try:
+            clear_system_proxy()
+        except Exception:
+            pass
+        try:
+            clear_terminal_proxy()
+        except Exception:
+            pass
+
+    def on_close():
+        # 以「真实系统状态」为准，而不是内部状态位：
+        # 用户可能在软件之外手动关掉了代理（那样不该再弹窗），
+        # 也可能在软件之外被打开（那样应该弹窗）。
+        detail = {}
+        try:
+            detail = get_proxy_detail()
+            enabled = bool(detail.get("enabled"))
+        except Exception:
+            try:
+                enabled, _ = get_proxy_status()
+            except Exception:
+                enabled = bool(state.get("proxy_active"))
+        if not enabled:
+            root.destroy()          # 代理已关，直接退出，不打扰
+            return
+
+        host = str(detail.get("host") or "")
+        port = str(detail.get("port") or "")
+        desc = ("%s:%s" % (host, port)) if (host or port) else "系统代理"
+        choice = ask_quit_with_proxy(desc)
+        if choice == QUIT_RESTORE:
+            _restore_now()          # 先恢复配置，再退出
+            root.destroy()
+        elif choice == QUIT_ONLY:
+            root.destroy()          # 只关软件，代理保持开启
+        # QUIT_CANCEL：什么都不做，留在软件里
+
     def _poll():
         try:
             while True:
@@ -969,6 +1267,12 @@ def build_gui():
                     _cancel_done(msg[1], msg[2], msg[3])
                 elif kind == "cancel_fail":
                     _cancel_fail(msg[1])
+                elif kind == "detected_state":
+                    _apply_detected(msg[1])
+                elif kind == "detected_ok":
+                    _detected_ok(msg[1])
+                elif kind == "detected_fail":
+                    _detected_fail(msg[1])
         except queue.Empty:
             pass
         root.after(100, _poll)
@@ -977,8 +1281,20 @@ def build_gui():
     detail_btn.config(command=on_detail)
     cancel_btn.config(command=on_cancel)
 
+    # 关闭窗口时先判断代理是否还开着（见 on_close）
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    if IS_MAC:
+        # macOS 的 Cmd+Q 不经过 WM_DELETE_WINDOW，需要单独接管，
+        # 否则用快捷键退出会绕过「代理还开着」的确认。
+        try:
+            root.createcommand("::tk::mac::Quit", on_close)
+        except Exception:
+            pass
+
     root.after(100, _poll)
     root.after(100, lambda: root.lift())
+    # 等窗口画完再去扫描系统代理状态，避免启动瞬间主线程卡顿
+    root.after(400, lambda: threading.Thread(target=_startup_detect, daemon=True).start())
     root.mainloop()
 
 

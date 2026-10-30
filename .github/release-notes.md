@@ -30,15 +30,26 @@
 提供该包的用途是让**开发者**能够直接解压、运行、修改并提交贡献。
 
 - **前提**：已安装 Python 3（3.10 / 3.11 / 3.12），安装时勾选 `Add python.exe to PATH`
-- **使用**：解压后双击 `app\启动NetPuff.bat`
-- **已知问题**
-  - Windows 分支（注册表 `Internet Settings` + Wininet 刷新 + `setx` 环境变量）**未经充分实机验证**，可能存在兼容性问题
+- **使用**：解压后双击 `app\start-netpuff.bat`
+- **⚠️ 未经实机功能测试**：注册表读写、Wininet 刷新、`setx`、以及退出时的原生确认框
+  （MessageBoxW）都只通过了静态检查与 CI 上的命令行冒烟验证（语法、CLI、
+  SOCKS5/HTTP 端到端、`.bat` 行尾），**没有在真实 Windows 桌面上完整走过一遍**。
+- **其他已知问题**
   - 系统 SOCKS 依赖 IE 设置：只有遵循系统代理的程序生效（Chrome / Edge 会；Firefox 默认不跟随；部分原生程序不遵循）
   - 终端代理只对**新开的**终端生效
 - **参与贡献**：相关代码集中在 `src/netpuff.py` 的 `IS_WIN` 分支——
   `set_system_proxy()` / `clear_system_proxy()`、`set_terminal_proxy()` / `clear_terminal_proxy()`、
-  `get_proxy_status()`、`_win_refresh()`
+  `get_proxy_status()` / `get_proxy_detail()`、`_win_refresh()`，以及 `on_close()` 的 Windows 分支
 - 包内 `README-Windows.txt` 有完整说明
+
+### 关于新行为
+
+完整改动见 **[CHANGELOG.md](https://github.com/hengjunguo35-oss/NetPuff/blob/main/CHANGELOG.md)**。
+
+- **退出保护**：系统代理仍开启时关闭窗口，会弹系统级确认框——
+  「恢复直连并退出」/「仅退出软件」/「取消」。代理已关则不再弹窗。
+- **启动自检**：打开软件即扫描系统代理；若仍在代理，状态栏直接显示「⚠ 正在代理」
+  并回填检测到的地址，点「取消代理 / 恢复直连」一键关闭。
 
 ### 共同说明
 
@@ -82,17 +93,30 @@ Cross-platform system proxy switcher. Both **macOS** and **Windows** packages ar
 This package exists so that **developers** can unzip it, run it, patch it, and submit changes.
 
 - **Requires** Python 3 (3.10 / 3.11 / 3.12) installed with `Add python.exe to PATH` ticked
-- **Usage**: unzip, then double-click `app\启动NetPuff.bat`
-- **Known issues**
-  - The Windows branch (registry `Internet Settings` + Wininet refresh + `setx` env vars) has
-    **not been fully verified on real hardware** and may have compatibility issues
+- **Usage**: unzip, then double-click `app\start-netpuff.bat`
+- **⚠️ NOT functionally tested on real hardware**: registry read/write, the Wininet refresh,
+  `setx`, and the native quit confirmation (MessageBoxW) have only passed static checks and
+  CI smoke tests (syntax, CLI, SOCKS5/HTTP end-to-end, `.bat` line endings) — **they have
+  never been exercised end-to-end on a real Windows desktop**.
+- **Other known issues**
   - System SOCKS relies on IE settings: only programs that follow the system proxy are
     affected (Chrome / Edge do; Firefox does not by default; some native apps do not)
   - The terminal proxy only affects **newly opened** terminals
 - **Contributing**: the Windows-specific code lives in the `IS_WIN` branches of
   `src/netpuff.py` — `set_system_proxy()` / `clear_system_proxy()`,
-  `set_terminal_proxy()` / `clear_terminal_proxy()`, `get_proxy_status()`, `_win_refresh()`
+  `set_terminal_proxy()` / `clear_terminal_proxy()`, `get_proxy_status()` /
+  `get_proxy_detail()`, `_win_refresh()`, plus the Windows branch of `on_close()`
 - See `README-Windows.txt` inside the package for the full notes
+
+### New behaviour
+
+Full change history: **[CHANGELOG.en.md](https://github.com/hengjunguo35-oss/NetPuff/blob/main/CHANGELOG.en.md)**.
+
+- **Quit protection**: closing the window while the system proxy is still on raises a native
+  dialog — "restore and quit" / "quit only" / "cancel". No dialog when the proxy is already off.
+- **Startup self-check**: the app scans the system proxy on launch; if one is still active the
+  status bar shows "⚠ proxying", the detected address is filled in, and
+  "cancel proxy / restore direct" disables it in one click.
 
 ### Common notes
 

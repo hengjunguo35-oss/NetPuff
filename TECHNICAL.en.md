@@ -154,6 +154,51 @@ UI thread _poll() every 100ms ──▶ read msg_q ──▶ update label / noti
 The "connecting…" animation is also driven by recursive `root.after` scheduling
 (`_animate_connect`) — non-blocking, no extra thread.
 
+### 2.6 Quit protection and startup self-check: never leave the proxy behind
+
+The proxy is **system-level** state, while the app is just a switch — quitting the app does
+not disable the proxy. That is the easiest trap to fall into: you assume quitting cleaned
+up, while the system proxy still points at that server. Two mechanisms close the gap.
+
+**Ask before closing**
+
+`root.protocol("WM_DELETE_WINDOW", on_close)` takes over window close. On macOS, Cmd+Q does
+not go through that event, so `root.createcommand("::tk::mac::Quit", on_close)` hooks it as
+well. `on_close` decides as follows:
+
+1. Call `get_proxy_detail()` to read the **real system state** — never the cached in-memory
+   flag, because the user may well have toggled the proxy in System Settings;
+2. Not enabled → quit silently;
+3. Still enabled → raise a **native** dialog (macOS `osascript display alert`, Windows
+   `MessageBoxW`) with three options:
+   - **Restore and quit** → run `clear_system_proxy()` + `clear_terminal_proxy()`, then quit
+   - **Quit only** → keep the proxy, quit
+   - **Cancel** → stay in the app
+
+> Two macOS gotchas:
+> ① `display alert` takes `as warning` for the icon; `with icon caution` belongs to
+> `display dialog` and makes the script **fail to compile** (this project hit exactly that
+> in v1.1.0);
+> ② clicking the `cancel button` and pressing Esc both return a non-zero exit code, so
+> "Cancel" must be its own button rather than borrowing one of the other two options.
+
+**Detect on launch**
+
+400 ms after startup (so the window is drawn) a worker thread runs `get_proxy_detail()` and
+sends the result back through the queue. If a system proxy is still enabled:
+
+- the status bar immediately becomes "⚠ system proxy still enabled · host:port", and the
+  detected address / port / protocol are **filled into the form**;
+- `fetch_exit_info()` then probes the egress asynchronously: on success the status is
+  upgraded to "⚠ proxying · egress IP · country city", otherwise it degrades to
+  "system proxy still on · probe failed" — either way a one-click disconnect is available;
+- the disconnect entry point is the existing "cancel proxy / restore direct" button —
+  **no new widgets**.
+
+This is exactly the complement to "quit only" chosen above: when you later want the proxy
+off, reopen the app, see the current state, and restore with one click instead of digging
+through System Settings.
+
 ---
 
 ## 3. Technology choices
@@ -301,6 +346,7 @@ NetPuff/
 3. `set_system_proxy()` / `clear_system_proxy()` — the two platforms' system-proxy branches
 4. `set_terminal_proxy()` — terminal env vars and marked-block deletion
 5. `_run_connect` / `_poll` in `build_gui()` — the GUI thread + queue pattern
+6. `on_close()` and `get_proxy_detail()` — quit protection and startup self-check
 
 ---
 

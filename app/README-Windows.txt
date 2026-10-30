@@ -8,10 +8,11 @@ NetPuff — Windows 版说明
 为了让开发者能够直接解压、运行、修改并提交贡献。
 Windows 相关代码集中在 src/netpuff.py 的 IS_WIN 分支：
 
-    set_system_proxy()      / clear_system_proxy()
-    set_terminal_proxy()    / clear_terminal_proxy()
-    get_proxy_status()
-    _win_refresh()          （ctypes 调 Wininet 的 InternetSetOption）
+    set_system_proxy()          / clear_system_proxy()
+    set_terminal_proxy()        / clear_terminal_proxy()
+    get_proxy_status()          / get_proxy_detail()
+    _win_refresh()              （ctypes 调 Wininet 的 InternetSetOption）
+    on_close() 的 Windows 分支   （ctypes MessageBoxW 退出确认框）
 
 启动脚本：app/start-netpuff.bat
 （包内使用 ASCII 文件名，以规避 Windows 上 zip 中文名的编码问题；
@@ -19,8 +20,10 @@ Windows 相关代码集中在 src/netpuff.py 的 IS_WIN 分支：
 
 已知问题
 --------
-1. Windows 分支（注册表 Internet Settings + Wininet 刷新 + setx 环境变量）
-   未经充分实机验证，可能存在兼容性问题。
+1. **本 Windows 版本未经实机功能测试。** 注册表读写、Wininet 刷新、setx 环境变量，
+   以及退出时的原生确认框（MessageBoxW），都只通过了静态检查与 CI 上的命令行冒烟
+   验证（语法、CLI、SOCKS5/HTTP 端到端、.bat 行尾），**没有在真实 Windows 桌面上
+   完整走一遍**。请按「仅供试用」对待。
 2. 系统 SOCKS 代理依赖 IE 设置：只有遵循系统代理的程序才会生效
    （Chrome / Edge 会；Firefox 默认不跟随；部分原生程序不遵循）。
    这是 Windows 平台的固有局限，不是本程序的 bug。
@@ -32,6 +35,16 @@ Windows 相关代码集中在 src/netpuff.py 的 IS_WIN 分支：
   "Add python.exe to PATH"。
 * 零第三方依赖：只用 Python 标准库；tkinter 需随 Python 一并安装
   （python.org 的官方安装包默认包含）。
+
+界面行为（设计上与 macOS 一致，但 Windows 上未实测）
+--------------------------------------------------
+* **退出保护**：系统代理仍开启时关闭窗口，会弹出系统级确认框——
+    【是】恢复直连后退出
+    【否】仅退出软件，保留代理
+    【取消】不退出
+  代理已经关掉时不会弹窗。
+* **启动自检**：打开软件会自动扫描系统代理。若仍在代理，状态栏直接显示
+  「⚠ 正在代理」并回填检测到的地址，点下方「取消代理 / 恢复直连」即可关闭。
 
 使用
 ----
@@ -69,10 +82,11 @@ Why is this package provided?
 So that developers can unzip it, run it, patch it, and submit changes.
 The Windows-specific code lives in the IS_WIN branches of src/netpuff.py:
 
-    set_system_proxy()      / clear_system_proxy()
-    set_terminal_proxy()    / clear_terminal_proxy()
-    get_proxy_status()
-    _win_refresh()          (calls Wininet InternetSetOption via ctypes)
+    set_system_proxy()          / clear_system_proxy()
+    set_terminal_proxy()        / clear_terminal_proxy()
+    get_proxy_status()          / get_proxy_detail()
+    _win_refresh()              (calls Wininet InternetSetOption via ctypes)
+    the Windows branch of on_close()  (ctypes MessageBoxW quit confirmation)
 
 Launcher: app/start-netpuff.bat
 (An ASCII filename is used inside the package to avoid zip filename-encoding problems on
@@ -80,8 +94,11 @@ Launcher: app/start-netpuff.bat
 
 Known issues
 ------------
-1. The Windows branch (registry Internet Settings + Wininet refresh + setx env vars) has
-   not been fully verified on real hardware and may have compatibility issues.
+1. **This Windows build has NOT been functionally tested on real hardware.** Registry
+   read/write, the Wininet refresh, `setx` environment variables, and the native quit
+   confirmation (MessageBoxW) have only passed static checks and the CI smoke tests
+   (syntax, CLI, SOCKS5/HTTP end-to-end, `.bat` line endings) — **they have never been
+   exercised end-to-end on a real Windows desktop**. Treat this as a trial build.
 2. System SOCKS relies on IE settings: only programs that follow the system proxy are
    affected (Chrome / Edge do; Firefox does not by default; some native apps do not).
    This is an inherent Windows-platform limitation, not a bug in this program.
@@ -94,6 +111,18 @@ Requirements
   during installation.
 * Zero third-party dependencies: Python standard library only. tkinter must be present
   (the official python.org installer includes it by default).
+
+UI behaviour (designed to match macOS, but untested on Windows)
+--------------------------------------------------------------
+* **Quit protection**: closing the window while the system proxy is still on raises a
+  native confirmation dialog —
+    【Yes】restore direct connection, then quit
+    【No】quit only, keep the proxy
+    【Cancel】stay in the app
+  No dialog appears when the proxy is already off.
+* **Startup self-check**: the app scans the system proxy on launch. If a proxy is still
+  active, the status bar shows "⚠ proxying", the detected address is filled in, and the
+  "cancel proxy / restore direct" button disables it in one click.
 
 Usage
 -----

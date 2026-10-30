@@ -37,6 +37,8 @@ correctly.
 | Terminal proxy | Also sets `http_proxy` etc. so curl / pip / git go through the proxy |
 | Direct confirmation | After disconnect, queries your real egress IP |
 | History | Remembers past IPs in a dropdown |
+| **Quit protection** | Closing the window while the proxy is still on raises a **native dialog** asking whether to restore first; silent if it is already off |
+| **Startup check** | Scans the system proxy on launch and shows "⚠ proxying" with a one-click disconnect |
 
 **What it does not do**: it provides no proxy service, relays no traffic, and ships no
 nodes. You connect to *your own* proxy.
@@ -175,6 +177,7 @@ block, and clearing restores the file exactly.
 | curl still goes direct | Terminal proxy only affects *new* shells; `source ~/.zshrc` or reopen |
 | Some Windows apps ignore the proxy | Windows system SOCKS relies on IE settings (see technical doc) |
 | Internal network slow/broken | Check that `no_proxy` covers your internal subnets |
+| Proxy still on after quitting | Expected: choosing "quit only" keeps the proxy. Reopen the app — it detects this automatically; click "cancel proxy" to restore direct |
 
 ---
 
