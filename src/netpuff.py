@@ -1260,8 +1260,8 @@ def build_gui():
     _enable_windows_dpi()
     root = tk.Tk()
     root.title(APP_TITLE)
-    root.geometry("500x565")
-    root.minsize(470, 535)
+    root.geometry("520x650")
+    root.minsize(480, 610)
 
     state = {"info": None, "working": False, "connecting": False,
              "proxy_active": False, "detected": False}
@@ -1350,7 +1350,8 @@ def build_gui():
 
     status_var = tk.StringVar(value="就绪")
     status_label = tk.Label(status_box, textvariable=status_var, anchor="w",
-                            font=(UI_FONT, 13), fg="#888888")
+                            font=(UI_FONT, 12), fg="#888888",
+                            wraplength=460, justify="left")
     status_label.pack(fill="x")
 
     # ---- 底部取消按钮 ----
@@ -1366,8 +1367,8 @@ def build_gui():
         # 状态区是单行，超出宽度会被无声裁切；这里主动截断并加省略号，
         # 免得「可点下方按钮关闭」这类关键提示正好落在被切掉的部分。
         text = str(text)
-        if len(text) > 40:
-            text = text[:39] + "…"
+        if len(text) > 60:
+            text = text[:59] + "…"
         status_var.set(text)
         status_label.config(fg=color)
 
