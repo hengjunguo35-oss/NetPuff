@@ -42,6 +42,9 @@ jobs:
           echo "APP_VERSION = $V"
           grep -q "## \[$V\]" CHANGELOG.md    || { echo "CHANGELOG.md 缺少 $V 条目"; exit 1; }
           grep -q "## \[$V\]" CHANGELOG.en.md || { echo "CHANGELOG.en.md 缺少 $V 条目"; exit 1; }
+          grep -q "#define MyAppVersion \"$V\"" app/installer.iss || { echo "installer.iss 版本与 APP_VERSION 不一致"; exit 1; }
+          FVER="${V//./, }, 0"
+          grep -q "filevers=($FVER)" app/version_info.txt || { echo "version_info.txt 版本与 APP_VERSION 不一致"; exit 1; }
 
       - name: CLI 冒烟检查
         shell: bash

@@ -37,6 +37,9 @@ Windows 分支加固：先备份、再写入、断开精确还原；并补上 SO
   退出确认框传入父窗口。
 - **测试**：新增 `tools/socks45-test-server.py`（SOCKS4/4a/5 测试服务端）与
   `tests/`（12 项；注册表测试写在影子键里，不碰用户真实配置）。
+- **发行**：新增 Windows 单文件 exe 与 Inno Setup 安装包（按用户安装，无需管理员、
+  无需 Python）；macOS `.app` 与窗口统一使用新图标；新增 `windows-build.yml`，
+  推 `v*` tag 时自动构建并附加到 Release。
 
 ---
 

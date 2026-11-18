@@ -44,6 +44,9 @@ Windows hardening: snapshot before writing, exact restore on disconnect, plus a 
   cancel button at startup, and the quit dialog now receives its parent window.
 - **Tests**: added `tools/socks45-test-server.py` (SOCKS4/4a/5 test server) and `tests/`
   (12 cases; registry tests use shadow keys and never touch your real settings).
+- **Packaging**: Windows single-file exe and Inno Setup installer (per-user, no admin
+  rights, no Python required); the macOS `.app` and window now share the new icon;
+  a new `windows-build.yml` builds and attaches artifacts on `v*` tags.
 
 ---
 

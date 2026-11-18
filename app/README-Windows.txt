@@ -32,8 +32,8 @@ Windows 相关代码集中在 src/netpuff.py 的 IS_WIN 分支：
 
 运行前提
 --------
-* 已安装 Python 3（3.10 / 3.11 / 3.12），安装时务必勾选
-  "Add python.exe to PATH"。
+* 安装包 / 便携版：Windows 10 / 11 x64，**不需要安装 Python**。
+* 从源码运行：Python 3.10+，安装时勾选 "Add python.exe to PATH"。
 * 零第三方依赖：只用 Python 标准库；tkinter 需随 Python 一并安装
   （python.org 的官方安装包默认包含）。
 
@@ -49,7 +49,9 @@ Windows 相关代码集中在 src/netpuff.py 的 IS_WIN 分支：
 
 使用
 ----
-双击    app\start-netpuff.bat
+安装版：从开始菜单或桌面启动 NetPuff。
+便携版：双击 NetPuff.exe（无需安装）。
+源码运行：双击 app\start-netpuff.bat（需要 Python）。
 
 或命令行：
     python src\netpuff.py status                 查看系统代理状态

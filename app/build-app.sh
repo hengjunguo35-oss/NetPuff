@@ -44,6 +44,7 @@ rm -rf "$APP"
 echo "==> 创建 .app 目录结构"
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/Resources/app"
 
 echo "==> 写入 Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -63,6 +64,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>${VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>NetPuff</string>
+    <key>CFBundleIconFile</key>
+    <string>NetPuff.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -97,8 +100,10 @@ osascript -e 'display alert "未找到可用的 Python" message "请安装 Pytho
 exit 1
 LAUNCHER
 
-echo "==> 内嵌源码"
+echo "==> 内嵌源码与图标"
 cp "$SRC" "$APP/Contents/Resources/netpuff.py"
+cp "$ROOT/app/netpuff.icns" "$APP/Contents/Resources/NetPuff.icns"
+cp "$ROOT/app/netpuff-256.png" "$APP/Contents/Resources/app/netpuff-256.png"
 
 echo "==> 赋可执行权限"
 chmod +x "$APP/Contents/MacOS/NetPuff"

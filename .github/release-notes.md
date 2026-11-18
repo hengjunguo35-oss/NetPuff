@@ -1,60 +1,44 @@
-## 🆕 本次新增两个功能：不再把代理忘在系统里 · Two new features
+## NetPuff 1.2.0 · Windows 兼容模式与安装包
 
-### 1. 退出保护：关窗口前先问你一句
+这个版本的重点是 **Windows 真正可用**：解决「系统代理只认 SOCKS4、被墙域名打不开」，
+并补上配置备份/还原、终端变量和安装包。
 
-以前关掉软件，系统代理还留着——直到下次上网才发现流量还在绕，或者干脆忘了这回事。
+### 🪟 Windows 兼容模式（默认开启）
 
-**场景**：连上代理，用完直接点窗口右上角关闭。软件没了，代理还在系统里生效。
+Windows 的系统代理只会发 SOCKS4，而 SOCKS4 要求在本地解析域名；被污染的域名会解析成
+错误 IP，代理自然连不上。
 
-**做法**：关窗口时先读一次**真实的系统状态**（不是内存里的标志位），若代理还开着，
-弹一个系统级确认框：
+现在连接 SOCKS5 时，NetPuff 会在本机 `127.0.0.1` 启动一个 **HTTP→SOCKS5 转换器**，
+系统代理指向本机；HTTPS 走 CONNECT，把**域名**交给上游解析：
 
-| 选项 Option | 行为 Behaviour |
-|---|---|
-| **恢复直连并退出** | 先清掉系统代理 + 终端代理，再退出 |
-| **仅退出软件** | 保留代理，只关软件 |
-| **取消** | 留在软件里 |
+```
+浏览器 ──CONNECT x.com:443──▶ 127.0.0.1:随机端口 ──SOCKS5(域名)──▶ 上游代理
+```
 
-代理已关闭时**不弹窗**，不打扰。
+- 实测系统层可直接打开 **x.com / google.com**；
+- 只监听本机回环，不经过第三方；断开时转换器自动结束；
+- 设置 `NETPUFF_NO_BRIDGE=1` 可退回纯 SOCKS4 模式。
 
-**为什么是三个按钮而不是「是 / 否」**：macOS 的 `display alert` 里，点「取消类按钮」和按 Esc
-返回值完全一样，二选一无法区分，会把「仅退出」误判成「取消」。加一个独立的「取消」才能三者分明。
+### 🔐 先备份，再写入，断开精确还原
 
-**macOS 的额外处理**：Cmd+Q 不走窗口关闭事件（`WM_DELETE_WINDOW`），所以另外接管了
-`::tk::mac::Quit`——否则用快捷键退出会绕过整个确认。
+注册表四项（`ProxyEnable / ProxyServer / ProxyOverride / AutoConfigURL`）与 8 个代理
+环境变量会先快照到 `~/.netpuff_win_state.json`；断开时只还原「仍然是我们写入的值」，
+期间被你改过的项保留并提示。没有快照时只关开关，绝不猜你原来的地址。
 
-**Why three buttons instead of Yes/No**: in macOS `display alert`, clicking the cancel button and
-pressing Esc return exactly the same value, so a two-button dialog cannot tell "quit only" from
-"cancel". A separate Cancel button is the only way to keep the three outcomes distinct.
-On macOS, Cmd+Q does not go through `WM_DELETE_WINDOW`, so `::tk::mac::Quit` is hooked as well —
-otherwise the shortcut would bypass the confirmation entirely.
+### 🧹 终端代理重写
 
-### 2. 启动自检：打开就知道现在还在代理
+不再用 `setx`（会留下空变量、有 `SUCCESS:` 噪音），改为写 `HKCU\Environment` 并广播；
+8 个变量（含大小写与 `no_proxy`）；清理时只删自己写的值，你原有的公司代理会恢复。
+`connect` 不带 `-t` 时不再清空终端代理。
 
-接上面的「仅退出软件」——过一段时间想把代理关掉，还得去系统设置里手动改。
+### 🛠 其他修复
 
-**做法**：打开软件 400ms 后，在后台线程扫描系统代理配置。若仍在代理：
-
-- 状态栏直接切成「⚠ 检测到系统代理仍开启 · 地址:端口」
-- 把探测到的地址 / 端口 / 协议**回填进表单**
-- 再异步探测出口：成功则显示「⚠ 正在代理 · 出口 IP · 国家 城市」；失败则显示「探测失败」，仍可关闭
-- 关闭入口就是原有的「取消代理 / 恢复直连」按钮——**没有新增任何控件**
-
-**How it works**: 400 ms after launch a worker thread scans the system proxy configuration. If a
-proxy is still active, the status bar switches to "⚠ system proxy still enabled · host:port", the
-detected address / port / protocol are filled into the form, and the egress is probed
-asynchronously. The disconnect entry point is the existing
-"cancel proxy / restore direct" button — **no new widgets**.
-
-### 修复：macOS 对话框差点弹不出来 · A dialog that nearly failed to compile
-
-第一版用了 `with icon caution`——那是 `display dialog` 的参数，`display alert` 不认，
-脚本**编译失败**。用 `osacompile` 校验时才发现，已改为 `as warning`。
-若没有这一步校验，这个功能会在 macOS 上安静地失效。
-
-The first version used `with icon caution`, a `display dialog` parameter that `display alert`
-rejects — the script **failed to compile**. Caught by validating with `osacompile`; now uses
-`as warning`. Without that check the feature would have silently done nothing on macOS.
+- CLI：端口非法、协议失败不再抛 traceback；参数错误退出码 2，运行失败 3；
+  `status` 关闭态不再打印服务器地址。
+- 探测按 `Content-Length` 读取，避免服务端 keep-alive 导致 15 秒超时。
+- 支持 `[IPv6]:端口`。
+- GUI：高 DPI 感知、Windows 字体/主题、状态栏换行、取消按钮初始禁用、
+  退出确认框传入父窗口；应用与窗口统一使用新图标。
 
 ---
 
@@ -62,82 +46,59 @@ rejects — the script **failed to compile**. Caught by validating with `osacomp
 
 | 文件 File | 平台 Platform | 说明 Description |
 |---|---|---|
-| **NetPuff-{{VERSION}}.dmg** | macOS | **推荐 Recommended** — 双击打开后，把 App 拖进「应用程序」文件夹 / Open it and drag the app into Applications |
-| NetPuff-{{VERSION}}-macOS.zip | macOS | 备用 Alternative — 解压即得 `.app` / Unzip to get the `.app` |
-| NetPuff-{{VERSION}}-Windows.zip | Windows | ⚠️ **功能尚未完善，未经实机测试** / not yet complete, untested |
-| SHA256SUMS.txt | — | 校验和 Checksums — `shasum -a 256 -c SHA256SUMS.txt` |
+| **NetPuff-1.2.0-Setup.exe** | Windows | **推荐**：向导安装，按用户安装（无需管理员），自动建开始菜单快捷方式 |
+| NetPuff.exe | Windows | 便携版：单文件，双击即用，不需要安装 Python |
+| **NetPuff-1.2.0.dmg** | macOS | **推荐**：双击打开后把 App 拖进「应用程序」（由 CI 在 macOS 上构建） |
+| NetPuff-1.2.0-macOS.zip | macOS | 备用：解压即得 `NetPuff.app` |
+| SHA256SUMS.txt | — | 校验和：`shasum -a 256 -c SHA256SUMS.txt` |
 
-**系统要求 Requirements**：macOS + Python 3.10 / 3.11 / 3.12（含 `tkinter` ≥ 8.6）
-**Windows**：Python 3.10 / 3.11 / 3.12，安装时勾选 `Add python.exe to PATH`
+**Windows 要求**：Windows 10/11 x64；安装包与便携版**不需要安装 Python**。
+**macOS 要求**：Python 3.10–3.13（含 `tkinter` ≥ 8.6），不打包 Python 运行时。
 
-> 本程序**不打包 Python 运行时**——`.app` 只是一个启动器 + 内嵌脚本，零第三方依赖。
-> No Python runtime is bundled — the `.app` is a launcher plus the embedded script, with zero
-> third-party dependencies.
+> Windows 安装包与 exe 未做代码签名，SmartScreen 可能提示「未知发布者」，
+> 点「更多信息 → 仍要运行」即可。
+> macOS 应用未签名，首次打开需右键 → 打开，或执行
+> `xattr -dr com.apple.quarantine /Applications/NetPuff.app`。
 
 ---
 
-## ⚠️ 首次打开被 macOS 拦截？· Gatekeeper blocking the first launch?
+## ⚠️ 首次打开被 macOS 拦截？· Gatekeeper
 
 本程序没有 Apple 开发者签名，macOS 会提示「无法验证开发者」。
-The app is not signed with an Apple Developer certificate, so macOS warns that the developer
-cannot be verified.
 
-**方法一 Option 1（推荐 Recommended）**
-右键点 App → 选择「打开」→ 再点「打开」。只需一次。
-Right-click the app → **Open** → **Open** again. Only needed once.
+**方法一**：右键点 App → 选择「打开」→ 再点「打开」（只需一次）。
+**方法二**：`xattr -dr com.apple.quarantine /Applications/NetPuff.app`
 
-**方法二 Option 2**
-```bash
-xattr -dr com.apple.quarantine /Applications/NetPuff.app
-```
-
-⚠️ 另需注意：**不要用 macOS 自带的 `python3`**——Xcode 版 Tk 过旧，创建窗口时会直接崩溃。
+⚠️ **不要用 macOS 自带的 `python3`**——Xcode 版 Tk 过旧，创建窗口时会崩溃。
 自检：`python3.11 -c "import tkinter; print(tkinter.TkVersion)"`，结果需 ≥ 8.6。
-Do **not** use the system `python3` — its Tk is too old and crashes when a window is created.
 
 ---
 
-## ⚠️ Windows 版：未经实机测试 · Windows build: NOT tested on real hardware
+## ✨ English summary
 
-提供这个包，是为了让开发者能直接解压、运行、修改并提交贡献。
+NetPuff 1.2.0 makes Windows genuinely usable:
 
-- 注册表读写、Wininet 刷新、`setx`、退出确认框（MessageBoxW）**只通过静态检查与 CI 命令行冒烟验证**
-  ——语法、CLI、SOCKS5/HTTP 端到端、`.bat` 行尾，**从未在真实 Windows 桌面完整走过一遍**
-- 系统 SOCKS 依赖 IE 设置：只有遵循系统代理的程序生效（Chrome / Edge 会；Firefox 默认不跟随）
-- 终端代理只对**新开的**终端生效
-- 想参与贡献：相关代码在 `src/netpuff.py` 的 `IS_WIN` 分支——`set_system_proxy()` /
-  `clear_system_proxy()`、`set_terminal_proxy()` / `clear_terminal_proxy()`、`get_proxy_status()` /
-  `get_proxy_detail()`、`_win_refresh()`，以及 `on_close()` 的 Windows 分支
+- **Compatibility mode (on by default)**: Windows only speaks SOCKS4 and resolves DNS
+  locally, so blocked domains fail. NetPuff now runs a local HTTP→SOCKS5 bridge on
+  `127.0.0.1`; HTTPS uses CONNECT so the upstream resolves host names. Verified to open
+  x.com / google.com through the system proxy. Loopback only; stopped on disconnect;
+  disable with `NETPUFF_NO_BRIDGE=1`.
+- **Snapshot / restore**: four registry values and eight environment variables are saved
+  before writing and restored exactly on disconnect (only values still ours; user edits
+  are kept). Without a snapshot it only turns the switch off.
+- **Terminal proxy**: written via `HKCU\Environment` + `WM_SETTINGCHANGE`, eight variables
+  including `no_proxy`, owned values only; `-t` semantics fixed.
+- **CLI/GUI**: readable errors instead of tracebacks, `Content-Length`-aware probing,
+  IPv6 `[addr]:port`, DPI awareness, new app icon, and installer packaging.
 
-Registry read/write, the Wininet refresh, `setx`, and the native quit dialog (MessageBoxW) have only
-passed static checks and CI smoke tests — they have **never** been exercised end-to-end on a real
-Windows desktop. The Windows-specific code lives in the `IS_WIN` branches of `src/netpuff.py`.
-
----
-
-## ✨ 其他 · Also in this release
-
-新增 `get_proxy_detail()`：读取系统代理的协议 / 地址 / 端口，供启动自检与出口探测使用。
-Windows 侧解析 `ProxyServer` 的多协议映射，按 socks > http > https 取优先级。
-
-Adds `get_proxy_detail()`, which reads the system proxy protocol / address / port for the startup
-self-check and egress probing (on Windows it parses multi-protocol `ProxyServer` maps, preferring
-socks > http > https).
-
-状态栏文本增加截断保护，避免过长提示被无声裁切。
-Status-bar text is now truncated with an ellipsis instead of being silently clipped.
-
-文档同步更新：CHANGELOG 中英双版、技术文档新增 2.6 节（两个机制的实现与踩过的坑）、
-README 功能表与排错表、Windows 包内说明。
-Documentation updated across both changelogs, the technical docs (new section 2.6), the README
-feature and troubleshooting tables, and the Windows package notes.
+Assets: Windows `NetPuff-1.2.0-Setup.exe` / portable `NetPuff.exe`; macOS
+`NetPuff-1.2.0.dmg` / `NetPuff-1.2.0-macOS.zip`; `SHA256SUMS.txt`.
 
 ---
 
-**本程序不提供代理服务、不承载或中转任何流量、不内置任何节点**——你连的是你自己的代理。
-**No proxy service, no traffic relay, no bundled nodes** — you connect to your own proxy.
+**本程序不提供代理服务、不中转第三方流量、不内置任何节点**——你连的是你自己的代理。
+Windows 兼容模式仅在本机 `127.0.0.1` 做协议转换。
 
 历史记录与配置仅保存在本机：`~/.netpuff_history.json`、`~/.netpuff_config.json`。
-History and config stay on your machine only.
 
-许可证 License：MIT · 仅供合法用途，请遵守你所在国家/地区的法律法规 / For lawful use only.
+许可证 License：MIT · 仅供合法用途。

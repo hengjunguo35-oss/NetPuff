@@ -52,10 +52,30 @@ NetPuff 只负责把「开关」拨到位，并用一个真实的请求替你验
 
 ## 快速开始
 
+### Windows（推荐：安装包 / 便携版）
+
+从 [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases) 下载：
+
+- **`NetPuff-1.2.0-Setup.exe`** —— 向导安装，按用户安装（无需管理员），自动建开始菜单快捷方式；
+- **`NetPuff.exe`** —— 便携版，单文件双击即用。
+
+两者都**不需要安装 Python**。Windows 10/11 x64。
+
+> 默认启用**兼容模式**：本机 `127.0.0.1` 上做 HTTP→SOCKS5 转换，系统代理指向本机，
+> 域名交给上游解析——被墙站点也能打开。断开时转换器自动停止。
+
 ### macOS
 
+从 [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases) 下载 `.dmg`（推荐）
+或 `-macOS.zip`，取出 `NetPuff.app` 拖进「应用程序」。
+
+需要 Python 3.10–3.13（含 `tkinter` ≥ 8.6），不打包 Python 运行时。
+首次打开被 Gatekeeper 拦截时：右键 App → 打开 → 再点「打开」。
+
+### 从源码运行
+
 ```bash
-# 直接跑 GUI
+# macOS：直接跑 GUI
 python3 src/netpuff.py
 
 # 或命令行连接（连接 + 终端代理一起开）
@@ -65,16 +85,13 @@ python3 src/netpuff.py connect 192.168.1.100 2080 -t
 python3 src/netpuff.py disconnect
 ```
 
-双击即用的 `.app` 可以自己打包：
+macOS 打包成 `.app`：
 
 ```bash
 ./app/build-app.sh          # 生成 NetPuff.app，双击即用
 ```
 
-### Windows
-
-> 默认启用**兼容模式**：本机 `127.0.0.1` 上做 HTTP→SOCKS5 转换，系统代理指向本机，
-> 域名交给上游解析——被墙站点也能打开。可在窗口里正常连接/断开，断开时转换器自动停止。
+Windows 从源码运行：
 
 ```
 双击  app\启动NetPuff.bat

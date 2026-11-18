@@ -118,6 +118,21 @@ ENV_PROXY_VARS = ("http_proxy", "https_proxy", "all_proxy",
 # Windows 的默认 UI 字体与 macOS 不同，硬编码 Helvetica 在高分屏上会发虚。
 UI_FONT = "Segoe UI" if IS_WIN else "Helvetica"
 
+
+def resource_path(*parts):
+    """资源路径：源码运行时在项目根目录，PyInstaller 打包后在 _MEIPASS。"""
+    if getattr(sys, "frozen", False):
+        bases = [getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)),
+                 os.path.dirname(sys.executable)]
+    else:
+        here = os.path.dirname(os.path.abspath(__file__))
+        bases = [os.path.dirname(here), here]
+    for base in bases:
+        path = os.path.join(base, *parts)
+        if os.path.exists(path):
+            return path
+    return os.path.join(bases[0], *parts)
+
 PY = sys.executable
 
 
@@ -1116,14 +1131,19 @@ def _bridge_free_port():
 
 
 def _bridge_exe():
+    if getattr(sys, "frozen", False):
+        return sys.executable
     cand = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     return cand if os.path.exists(cand) else sys.executable
 
 
 def _bridge_start(host, port):
     listen_port = _bridge_free_port()
-    cmd = [_bridge_exe(), os.path.abspath(__file__), "_bridge",
-           str(listen_port), host, str(port)]
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "_bridge", str(listen_port), host, str(port)]
+    else:
+        cmd = [_bridge_exe(), os.path.abspath(__file__), "_bridge",
+               str(listen_port), host, str(port)]
     flags = 0x00000008 | 0x08000000 if IS_WIN else 0   # DETACHED | NO_WINDOW
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, creationflags=flags)
@@ -1478,10 +1498,16 @@ def build_gui():
     root.title(APP_TITLE)
     if IS_WIN:
         try:
-            icon = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "app", "netpuff.ico")
+            icon = resource_path("app", "netpuff.ico")
             if os.path.exists(icon):
                 root.iconbitmap(default=icon)
+        except Exception:
+            pass
+    elif IS_MAC:
+        try:
+            png = resource_path("app", "netpuff-256.png")
+            if os.path.exists(png):
+                root.iconphoto(True, tk.PhotoImage(file=png))
         except Exception:
             pass
     root.geometry("520x700")
