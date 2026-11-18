@@ -49,6 +49,8 @@ class WinProxyStateTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self._old = (np.WIN_INET_KEY_PATH, np.WIN_ENV_KEY_PATH,
                      np.WIN_STATE_FILE, np._win_refresh)
+        self._old_env = os.environ.get("NETPUFF_NO_BRIDGE")
+        os.environ["NETPUFF_NO_BRIDGE"] = "1"   # 单测只验证非兼容模式路径
         np.WIN_INET_KEY_PATH = self.inet
         np.WIN_ENV_KEY_PATH = self.envk
         np.WIN_STATE_FILE = os.path.join(self.tmp, "state.json")
@@ -61,6 +63,10 @@ class WinProxyStateTests(unittest.TestCase):
     def tearDown(self):
         (np.WIN_INET_KEY_PATH, np.WIN_ENV_KEY_PATH,
          np.WIN_STATE_FILE, np._win_refresh) = self._old
+        if self._old_env is None:
+            os.environ.pop("NETPUFF_NO_BRIDGE", None)
+        else:
+            os.environ["NETPUFF_NO_BRIDGE"] = self._old_env
 
     # ---- helpers -------------------------------------------------
     def _clear(self, path):

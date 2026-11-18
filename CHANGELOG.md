@@ -11,6 +11,11 @@
 
 Windows 分支加固：先备份、再写入、断开精确还原；并补上 SOCKS4 预检。
 
+- **Windows 兼容模式（默认开启）**：WinINet 只支持 SOCKS4，且要求在本地解析域名，
+  被污染的域名会被解析成错误 IP。现在连接 SOCKS5 时会在本机 `127.0.0.1` 启动一个
+  HTTP→SOCKS5 转换器，系统代理写成 `http=127.0.0.1:端口`；HTTPS 走 CONNECT，把域名
+  交给上游解析。实测系统层可正常打开 x.com / google.com。断开时自动停止转换器；
+  设置环境变量 `NETPUFF_NO_BRIDGE=1` 可退回纯 SOCKS4 模式。
 - **系统代理备份/还原**：写入前把 `ProxyEnable / ProxyServer / ProxyOverride /
   AutoConfigURL` 与 8 个代理环境变量快照到 `~/.netpuff_win_state.json`；断开时只还原
   「仍然是我们写入的值」，期间被用户改过的项保留现状并提示。没有快照时只关闭开关，

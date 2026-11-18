@@ -63,6 +63,7 @@ import os
 import platform
 import queue
 import re
+import select
 import socket
 import ssl
 import subprocess
@@ -626,10 +627,17 @@ def get_proxy_detail():
             if not host:                 # 没有冒号说明只给了 host
                 host, port = addr, ""
             host = normalize_host(host)
+            protocol = ("socks5" if scheme in ("socks", "socks5")
+                        else ("https" if scheme == "https" else "http"))
+            # 兼容模式下注册表里写的是 127.0.0.1:端口，对用户显示上游真实地址。
+            b = (_state_load() or {}).get("bridge") or {}
+            if b and host == "127.0.0.1" and str(port) == str(b.get("port")):
+                host = b.get("upstream_host", host)
+                port = b.get("upstream_port", port)
+                protocol = "socks5"
             out.update({
                 "enabled": True,
-                "protocol": "socks5" if scheme in ("socks", "socks5")
-                            else ("https" if scheme == "https" else "http"),
+                "protocol": protocol,
                 "host": host,
                 "port": port,
             })
@@ -799,26 +807,45 @@ def _state_active(st, current):
 
 
 def win_apply_proxy(host, port, scheme):
-    server = _proxy_server_value(host, port, scheme)
-    key = _win_open(WIN_INET_KEY_PATH, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+    old = _state_load()
+    if old and old.get("bridge"):
+        _bridge_stop(old["bridge"])
+        old["bridge"] = None
+        _state_save(old)
+
+    bridge = None
     try:
-        current = {n: _win_read_value(key, n) for n in
-                   ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL")}
-        st = _state_load()
-        if not (st and _state_active(st, current)):
-            # 没有快照，或快照里的值已被用户改掉：重新拍一张当前真实状态。
-            st = win_capture_state()
-        override = _merge_override(current.get("ProxyOverride", {}).get("value"))
-        st["applied"] = {"ProxyEnable": 1, "ProxyServer": server,
-                         "ProxyOverride": override}
-        _state_save(st)
-        winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
-        winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, server)
-        winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ, override)
-    finally:
-        winreg.CloseKey(key)
-    _win_refresh()
-    return "Windows · %s" % scheme.upper()
+        if scheme == "socks5" and not os.environ.get("NETPUFF_NO_BRIDGE"):
+            bridge = _bridge_start(host, port)
+            server = "http=127.0.0.1:%d;https=127.0.0.1:%d" % (
+                bridge["port"], bridge["port"])
+        else:
+            server = _proxy_server_value(host, port, scheme)
+
+        key = _win_open(WIN_INET_KEY_PATH, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+        try:
+            current = {n: _win_read_value(key, n) for n in
+                       ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL")}
+            st = _state_load()
+            if not (st and _state_active(st, current)):
+                # 没有快照，或快照里的值已被用户改掉：重新拍一张当前真实状态。
+                st = win_capture_state()
+            override = _merge_override(current.get("ProxyOverride", {}).get("value"))
+            st["applied"] = {"ProxyEnable": 1, "ProxyServer": server,
+                             "ProxyOverride": override}
+            st["bridge"] = bridge
+            _state_save(st)
+            winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, server)
+            winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ, override)
+        finally:
+            winreg.CloseKey(key)
+        _win_refresh()
+    except Exception:
+        if bridge:
+            _bridge_stop(bridge)
+        raise
+    return "Windows · %s" % ("SOCKS5（兼容模式）" if bridge else scheme.upper())
 
 
 def win_restore_proxy():
@@ -858,6 +885,10 @@ def win_restore_proxy():
         winreg.CloseKey(key)
     _win_refresh()
     st["applied"] = {}
+    bridge = st.get("bridge")
+    st["bridge"] = None
+    if bridge:
+        _bridge_stop(bridge)
     if st.get("applied_env"):
         _state_save(st)
     else:
@@ -933,11 +964,196 @@ def ensure_windows_system_proxy(host, port, scheme):
     if scheme == "https":
         raise ConnectionError(
             "Windows 系统代理不支持「TLS 连代理」；请改用 -p http 或 -p socks5")
-    if scheme == "socks5" and not socks4_probe(host, port):
-        raise ConnectionError(
-            "Windows 系统代理只支持 SOCKS4，但服务器 %s:%s 未通过 SOCKS4 握手；"
-            "系统级应用无法走代理。若只需要命令行，请加 -t（终端代理走 SOCKS5）。"
-            % (host, port))
+    if scheme == "socks5" and os.environ.get("NETPUFF_NO_BRIDGE"):
+        # 关闭兼容模式时才需要服务器自己支持 SOCKS4
+        if not socks4_probe(host, port):
+            raise ConnectionError(
+                "Windows 系统代理只支持 SOCKS4，但服务器 %s:%s 未通过 SOCKS4 握手；"
+                "去掉 NETPUFF_NO_BRIDGE 可用本机兼容模式。" % (host, port))
+
+
+# ======================================================================
+# 本机 HTTP -> SOCKS5 转换器（Windows 兼容模式）
+#
+# 为什么需要它：WinINet 只会发 SOCKS4，而 SOCKS4 要求在本地解析域名；
+# 被污染的域名会解析成错误 IP，代理当然连不上。改成 HTTP 代理后，HTTPS
+# 走 CONNECT "域名:443"，域名交给上游 SOCKS5 解析，问题消失。
+# 只监听 127.0.0.1，不对外暴露。
+# ======================================================================
+def _socks5_tunnel(host, port, upstream_host, upstream_port, timeout=15):
+    s = socket.create_connection((normalize_host(upstream_host), int(upstream_port)),
+                                 timeout=timeout)
+    s.settimeout(timeout)
+    try:
+        s.sendall(b"\x05\x01\x00")
+        if _recv_exact(s, 2) != b"\x05\x00":
+            raise ConnectionError("转换器：SOCKS5 握手失败")
+        hb = host.encode("idna") if host.isascii() else host.encode("utf-8")
+        s.sendall(b"\x05\x01\x00\x03" + bytes([len(hb)]) + hb
+                  + int(port).to_bytes(2, "big"))
+        head = _recv_exact(s, 4)
+        if head[1] != 0:
+            raise ConnectionError("转换器：SOCKS5 CONNECT 失败 (%d)" % head[1])
+        atyp = head[3]
+        if atyp == 1:
+            _recv_exact(s, 4)
+        elif atyp == 3:
+            _recv_exact(s, _recv_exact(s, 1)[0])
+        elif atyp == 4:
+            _recv_exact(s, 16)
+        else:
+            raise ConnectionError("转换器：SOCKS5 响应格式错误")
+        _recv_exact(s, 2)
+        return s
+    except Exception:
+        try:
+            s.close()
+        except Exception:
+            pass
+        raise
+
+
+def _bridge_pipe(a, b):
+    try:
+        while True:
+            readable, _, _ = select.select([a, b], [], [], 30)
+            if not readable:
+                return
+            for s in readable:
+                data = s.recv(65536)
+                if not data:
+                    return
+                (b if s is a else a).sendall(data)
+    except Exception:
+        pass
+
+
+def _bridge_read_head(client):
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = client.recv(4096)
+        if not chunk:
+            return None
+        data += chunk
+        if len(data) > 65536:
+            return None
+    return data
+
+
+def _bridge_handle(client, upstream_host, upstream_port):
+    try:
+        client.settimeout(20)
+        head = _bridge_read_head(client)
+        if not head:
+            return
+        header, _, rest = head.partition(b"\r\n\r\n")
+        first = header.split(b"\r\n", 1)[0].decode("latin-1")
+        parts = first.split(" ")
+        if len(parts) < 3:
+            return
+        method, target, version = parts[0], parts[1], parts[2]
+
+        if method.upper() == "CONNECT":
+            host, _, port = target.rpartition(":")
+            remote = _socks5_tunnel(host.strip("[]"), int(port),
+                                    upstream_host, upstream_port)
+            client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            if rest:
+                remote.sendall(rest)
+            threading.Thread(target=_bridge_pipe, args=(client, remote),
+                             daemon=True).start()
+            _bridge_pipe(remote, client)
+            remote.close()
+            return
+
+        if target.startswith("http://"):
+            u = urllib.parse.urlsplit(target)
+            remote = _socks5_tunnel(u.hostname, u.port or 80,
+                                    upstream_host, upstream_port)
+            path = u.path or "/"
+            if u.query:
+                path += "?" + u.query
+            new_first = ("%s %s %s" % (method, path, version)).encode("latin-1")
+            lines = header.split(b"\r\n")
+            new_head = b"\r\n".join([new_first] + lines[1:]) + b"\r\n\r\n" + rest
+            remote.sendall(new_head)
+            _bridge_pipe(remote, client)
+            remote.close()
+            return
+
+        client.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+    except Exception:
+        try:
+            client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+        except Exception:
+            pass
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def bridge_main(listen_port, upstream_host, upstream_port):
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", int(listen_port)))
+    srv.listen(64)
+    while True:
+        conn, _ = srv.accept()
+        threading.Thread(target=_bridge_handle,
+                         args=(conn, upstream_host, upstream_port),
+                         daemon=True).start()
+
+
+def _bridge_free_port():
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _bridge_exe():
+    cand = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return cand if os.path.exists(cand) else sys.executable
+
+
+def _bridge_start(host, port):
+    listen_port = _bridge_free_port()
+    cmd = [_bridge_exe(), os.path.abspath(__file__), "_bridge",
+           str(listen_port), host, str(port)]
+    flags = 0x00000008 | 0x08000000 if IS_WIN else 0   # DETACHED | NO_WINDOW
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, creationflags=flags)
+    deadline = time.time() + 6
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", listen_port), timeout=0.3):
+                return {"pid": proc.pid, "port": listen_port,
+                        "upstream_host": host, "upstream_port": int(port)}
+        except Exception:
+            time.sleep(0.05)
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    raise ConnectionError("本机兼容模式启动失败（127.0.0.1:%d）" % listen_port)
+
+
+def _bridge_stop(info):
+    pid = (info or {}).get("pid")
+    if not pid:
+        return
+    try:
+        if IS_WIN:
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, check=False)
+        else:
+            os.kill(pid, 15)
+    except Exception:
+        pass
 
 
 # ======================================================================
@@ -1651,6 +1867,10 @@ def build_gui():
 
 
 def main():
+    # 内部命令：本机 HTTP->SOCKS5 转换器（由 connect 以独立进程拉起）
+    if len(sys.argv) >= 5 and sys.argv[1] == "_bridge":
+        bridge_main(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
+        return
     if len(sys.argv) > 1:
         cli()
     else:

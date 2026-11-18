@@ -11,6 +11,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 Windows hardening: snapshot before writing, exact restore on disconnect, plus a SOCKS4 preflight.
 
+- **Windows compatibility mode (on by default)**: WinINet speaks SOCKS4 only and resolves
+  host names locally, so poisoned DNS yields wrong IPs. When connecting through SOCKS5,
+  NetPuff now starts a local HTTP→SOCKS5 bridge on `127.0.0.1` and points the system proxy
+  at `http=127.0.0.1:port`; HTTPS uses CONNECT, so the upstream resolves the host name.
+  Verified to open x.com / google.com through the system proxy. The bridge is stopped on
+  disconnect; set `NETPUFF_NO_BRIDGE=1` to fall back to plain SOCKS4 mode.
 - **System proxy snapshot / restore**: before writing, `ProxyEnable / ProxyServer /
   ProxyOverride / AutoConfigURL` and eight proxy environment variables are captured to
   `~/.netpuff_win_state.json`. Disconnect restores only values that are still ours;
