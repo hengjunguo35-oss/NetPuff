@@ -7,6 +7,40 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.2.0] — 2026-11-18
+
+Windows hardening: snapshot before writing, exact restore on disconnect, plus a SOCKS4 preflight.
+
+- **System proxy snapshot / restore**: before writing, `ProxyEnable / ProxyServer /
+  ProxyOverride / AutoConfigURL` and eight proxy environment variables are captured to
+  `~/.netpuff_win_state.json`. Disconnect restores only values that are still ours;
+  anything you changed meanwhile is left alone with a notice. Without a snapshot it only
+  turns the switch off and **never guesses your original address**.
+- **SOCKS4 preflight**: Windows' system layer (WinINet) only speaks SOCKS4; a PAC that
+  returns SOCKS5 is silently ignored and falls back to DIRECT. NetPuff now probes SOCKS4
+  before writing the registry and fails with a clear message if it is unsupported
+  (`-t` still gives you terminal-only proxying).
+- **ProxyOverride**: `<local>` plus private ranges (`10.*`, `172.16.*`–`172.31.*`,
+  `192.168.*`; this field supports wildcards only, not CIDR), merged with your existing
+  entries and restored on disconnect.
+- **Terminal variables**: written through `HKCU\Environment` + `WM_SETTINGCHANGE` instead
+  of `setx` (no `SUCCESS:` noise, no 1024-character truncation); eight variables including
+  upper/lower case and `no_proxy`; cleanup deletes only values NetPuff wrote and restores
+  any value you had before.
+- **`-t` semantics**: `connect` without `-t` no longer clears the terminal proxy.
+- **CLI**: invalid ports and protocol failures no longer raise uncaught tracebacks;
+  argument errors exit 2, runtime failures exit 3; `status` no longer prints a server
+  address while disabled.
+- **Probing**: responses are read by `Content-Length`, so a keep-alive server no longer
+  causes a 15-second timeout.
+- **IPv6**: `[IPv6]:port` is supported in the registry, history and environment variables.
+- **GUI**: DPI awareness, Windows fonts/theme, platform-specific success text, disabled
+  cancel button at startup, and the quit dialog now receives its parent window.
+- **Tests**: added `tools/socks45-test-server.py` (SOCKS4/4a/5 test server) and `tests/`
+  (12 cases; registry tests use shadow keys and never touch your real settings).
+
+---
+
 ## [1.1.0] — 2026-10-30
 
 Added quit protection and startup auto-detection, so the proxy never stays enabled

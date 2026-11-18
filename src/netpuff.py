@@ -62,6 +62,7 @@ import json
 import os
 import platform
 import queue
+import re
 import socket
 import ssl
 import subprocess
@@ -69,6 +70,11 @@ import sys
 import threading
 import time
 import urllib.parse
+
+try:                    # winreg 只在 Windows 上存在，macOS 导入会失败
+    import winreg
+except ImportError:
+    winreg = None
 
 # Windows 上控制台或「被重定向的输出」编码往往不是 UTF-8（例如 CP1252 / CP936），
 # 此时 print 中文会抛 UnicodeEncodeError 直接崩掉 CLI。这里统一把 stdout/stderr
@@ -83,13 +89,33 @@ IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform.startswith("win")
 
 APP_TITLE = "NetPuff"
-APP_VERSION = "1.1.0"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
+APP_VERSION = "1.2.0"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
 USER_AGENT = "%s/%s" % (APP_TITLE, APP_VERSION)
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_history.json")
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_config.json")
 DEFAULT_PORT = "2080"
 GEO_API = "http://ip-api.com/json/?fields=status,country,regionName,city,isp,timezone,query&lang=zh-CN"
 PROTOCOLS = ("socks5", "http", "https")
+
+# ---- Windows 相关常量 -------------------------------------------------
+WIN_INET_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+WIN_ENV_KEY = r"Environment"
+WIN_STATE_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_win_state.json")
+# 测试时把下面两个路径换成影子键（HKCU\Software\NetPuff\Test\...），
+# 这样可以用真实 winreg API 做集成测试，而不碰用户真实的系统配置。
+WIN_INET_KEY_PATH = WIN_INET_KEY
+WIN_ENV_KEY_PATH = WIN_ENV_KEY
+# ProxyOverride 只认 "<local>" 与 "*" 通配，不认 CIDR，所以 172.16/12 要逐段展开。
+WIN_PROXY_OVERRIDE = ("<local>;10.*;"
+                      "172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;"
+                      "172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;"
+                      "172.28.*;172.29.*;172.30.*;172.31.*;192.168.*")
+ENV_PROXY_VARS = ("http_proxy", "https_proxy", "all_proxy",
+                  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                  "no_proxy", "NO_PROXY")
+
+# Windows 的默认 UI 字体与 macOS 不同，硬编码 Helvetica 在高分屏上会发虚。
+UI_FONT = "Segoe UI" if IS_WIN else "Helvetica"
 
 PY = sys.executable
 
@@ -160,13 +186,34 @@ def _recv_exact(s, n):
 
 
 def _read_http_body(s):
+    """读取 HTTP 响应正文。
+
+    优先按 Content-Length 精确读取：有些代理服务器即使收到
+    Connection: close 也会保持连接，若一直读到 EOF 会把探针拖到超时。
+    """
     data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = s.recv(65536)
+        if not chunk:
+            return data
+        data += chunk
+    head, body = data.split(b"\r\n\r\n", 1)
+    headers = head.decode("latin-1", "replace").lower()
+    match = re.search(r"content-length:\s*(\d+)", headers)
+    if match:
+        need = int(match.group(1))
+        while len(body) < need:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            body += chunk
+        return body[:need]
     while True:
         chunk = s.recv(65536)
         if not chunk:
             break
-        data += chunk
-    return data.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in data else data
+        body += chunk
+    return body
 
 
 def socks5_http_get(proxy_host, proxy_port, url, timeout=15):
@@ -186,7 +233,7 @@ def socks5_http_get(proxy_host, proxy_port, url, timeout=15):
     target_host = u.hostname
     target_port = u.port or (443 if use_ssl else 80)
 
-    s = socket.create_connection((proxy_host, int(proxy_port)), timeout=timeout)
+    s = socket.create_connection((normalize_host(proxy_host), int(proxy_port)), timeout=timeout)
     s.settimeout(timeout)
     try:
         # ① 问候：VER=0x05(SOCKS5) NMETHODS=1 METHODS=[0x00 无认证]
@@ -245,7 +292,7 @@ def http_proxy_get(proxy_host, proxy_port, url, secure=False, timeout=15):
     u = urllib.parse.urlparse(url)
     target_host = u.hostname
 
-    s = socket.create_connection((proxy_host, int(proxy_port)), timeout=timeout)
+    s = socket.create_connection((normalize_host(proxy_host), int(proxy_port)), timeout=timeout)
     s.settimeout(timeout)
     try:
         if secure:
@@ -296,7 +343,7 @@ def direct_http_get(url, timeout=10):
 
 def check_port_open(host, port, timeout=3):
     try:
-        with socket.create_connection((host, int(port)), timeout=timeout):
+        with socket.create_connection((normalize_host(host), int(port)), timeout=timeout):
             return True
     except Exception:
         return False
@@ -436,16 +483,7 @@ def set_system_proxy(host, port, scheme="socks5"):
         return "macOS · %s · %s" % (svc, scheme.upper())
 
     elif IS_WIN:
-        import winreg
-        tag = {"socks5": "socks", "http": "http", "https": "https"}[scheme]
-        path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
-        winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ,
-                          "%s=%s:%s" % (tag, host, port))
-        winreg.CloseKey(key)
-        _win_refresh()
-        return "Windows · %s" % scheme.upper()
+        return win_apply_proxy(host, port, scheme)
 
     else:
         raise NotImplementedError("暂不支持当前系统")
@@ -460,13 +498,7 @@ def clear_system_proxy():
             subprocess.run(["networksetup"] + args, check=False)
         return "macOS · 网络服务 %s" % svc
     elif IS_WIN:
-        import winreg
-        path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
-        winreg.CloseKey(key)
-        _win_refresh()
-        return "Windows · 注册表"
+        return win_restore_proxy()
     else:
         raise NotImplementedError("暂不支持当前系统")
 
@@ -497,7 +529,7 @@ def get_proxy_status():
         return (enabled, " / ".join(servers))
     elif IS_WIN:
         import winreg
-        path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        path = WIN_INET_KEY_PATH
         enabled = False
         server = ""
         try:
@@ -554,7 +586,7 @@ def get_proxy_detail():
 
     if IS_WIN:
         import winreg
-        path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        path = WIN_INET_KEY_PATH
         enabled = False
         server = ""
         try:
@@ -593,6 +625,7 @@ def get_proxy_detail():
             host, _, port = addr.rpartition(":")
             if not host:                 # 没有冒号说明只给了 host
                 host, port = addr, ""
+            host = normalize_host(host)
             out.update({
                 "enabled": True,
                 "protocol": "socks5" if scheme in ("socks", "socks5")
@@ -626,6 +659,288 @@ def _win_refresh():
 
 
 # ======================================================================
+# Windows 系统代理：备份 / 写入 / 精确还原
+# ======================================================================
+def _win_read_value(key, name):
+    try:
+        value, typ = winreg.QueryValueEx(key, name)
+        return {"present": True, "value": value, "type": typ}
+    except FileNotFoundError:
+        return {"present": False, "value": None, "type": None}
+
+
+def _win_open(path, access):
+    return winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, access)
+
+
+def _state_load():
+    try:
+        with open(WIN_STATE_FILE, "r", encoding="utf-8") as f:
+            st = json.load(f)
+        if isinstance(st, dict) and st.get("version") == 1:
+            return st
+    except Exception:
+        pass
+    return None
+
+
+def _state_save(st):
+    try:
+        with open(WIN_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(st, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _state_drop():
+    try:
+        os.remove(WIN_STATE_FILE)
+    except OSError:
+        pass
+
+
+def _env_read(name):
+    key = _win_open(WIN_ENV_KEY_PATH, winreg.KEY_READ)
+    try:
+        return _win_read_value(key, name)
+    finally:
+        winreg.CloseKey(key)
+
+
+def _env_write(values):
+    key = _win_open(WIN_ENV_KEY_PATH, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+    try:
+        for name, value in values.items():
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+    finally:
+        winreg.CloseKey(key)
+    _broadcast_env()
+
+
+def _env_delete(names):
+    if not names:
+        return
+    key = _win_open(WIN_ENV_KEY_PATH, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+    try:
+        for name in names:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+    finally:
+        winreg.CloseKey(key)
+    _broadcast_env()
+
+
+def _broadcast_env():
+    """广播 WM_SETTINGCHANGE，让资源管理器与新进程重读环境变量。"""
+    try:
+        import ctypes
+        result = ctypes.c_size_t()
+        ctypes.windll.user32.SendMessageTimeoutW(
+            0xFFFF, 0x001A, 0, ctypes.c_wchar_p("Environment"), 2, 1000,
+            ctypes.byref(result))
+    except Exception:
+        pass
+
+
+def normalize_host(host):
+    """把用户输入的 [IPv6] 或裸 IPv6 统一成不带方括号的形式。"""
+    h = str(host).strip()
+    if h.startswith("[") and h.endswith("]"):
+        return h[1:-1]
+    return h
+
+
+def hostport(host, port):
+    """拼 host:port；IPv6 必须加方括号，否则会和端口分隔符混淆。"""
+    h = normalize_host(host)
+    return "[%s]:%s" % (h, port) if ":" in h else "%s:%s" % (h, port)
+
+
+def _proxy_server_value(host, port, scheme):
+    addr = hostport(host, port)
+    if scheme == "socks5":
+        return "socks=%s" % addr
+    return "http=%s;https=%s" % (addr, addr)
+
+
+def _merge_override(existing):
+    items = [x.strip() for x in str(existing or "").split(";") if x.strip()]
+    for item in WIN_PROXY_OVERRIDE.split(";"):
+        if item and item not in items:
+            items.append(item)
+    return ";".join(items)
+
+
+def win_capture_state():
+    key = _win_open(WIN_INET_KEY_PATH, winreg.KEY_READ)
+    try:
+        registry = {n: _win_read_value(key, n) for n in
+                    ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL")}
+    finally:
+        winreg.CloseKey(key)
+    env = {n: _env_read(n) for n in ENV_PROXY_VARS}
+    return {"version": 1,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "registry": registry, "env": env,
+            "applied": {}, "applied_env": {}}
+
+
+def _state_active(st, current):
+    applied = st.get("applied") or {}
+    if not applied:
+        return False
+    for name, value in applied.items():
+        cur = current.get(name) or {}
+        if not cur.get("present") or cur.get("value") != value:
+            return False
+    return True
+
+
+def win_apply_proxy(host, port, scheme):
+    server = _proxy_server_value(host, port, scheme)
+    key = _win_open(WIN_INET_KEY_PATH, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+    try:
+        current = {n: _win_read_value(key, n) for n in
+                   ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL")}
+        st = _state_load()
+        if not (st and _state_active(st, current)):
+            # 没有快照，或快照里的值已被用户改掉：重新拍一张当前真实状态。
+            st = win_capture_state()
+        override = _merge_override(current.get("ProxyOverride", {}).get("value"))
+        st["applied"] = {"ProxyEnable": 1, "ProxyServer": server,
+                         "ProxyOverride": override}
+        _state_save(st)
+        winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, server)
+        winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ, override)
+    finally:
+        winreg.CloseKey(key)
+    _win_refresh()
+    return "Windows · %s" % scheme.upper()
+
+
+def win_restore_proxy():
+    st = _state_load()
+    if not st:
+        # 没有 NetPuff 的备份：只关开关，绝不猜用户原来的地址。
+        try:
+            key = _win_open(WIN_INET_KEY_PATH, winreg.KEY_SET_VALUE)
+            try:
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
+            finally:
+                winreg.CloseKey(key)
+            _win_refresh()
+            return "无 NetPuff 备份：只关闭了代理开关，未改动地址"
+        except Exception as exc:
+            return "无 NetPuff 备份，且关闭开关失败：%s" % exc
+    restored, conflicts = [], []
+    key = _win_open(WIN_INET_KEY_PATH, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+    try:
+        applied = st.get("applied") or {}
+        for name, saved in (st.get("registry") or {}).items():
+            if name not in applied:
+                continue
+            cur = _win_read_value(key, name)
+            if not cur.get("present") or cur.get("value") != applied[name]:
+                conflicts.append(name)
+                continue
+            if saved.get("present"):
+                winreg.SetValueEx(key, name, 0, saved["type"], saved["value"])
+            else:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            restored.append(name)
+    finally:
+        winreg.CloseKey(key)
+    _win_refresh()
+    st["applied"] = {}
+    if st.get("applied_env"):
+        _state_save(st)
+    else:
+        _state_drop()
+    if conflicts:
+        return "已还原 %d 项；%s 在此期间被改动，保留现状" % (len(restored), "、".join(conflicts))
+    return "Windows · 已还原 %d 项系统代理设置" % len(restored)
+
+
+def win_set_terminal_proxy(host, port, scheme):
+    url = _proxy_url(scheme, host, port)
+    values = {"http_proxy": url, "https_proxy": url, "all_proxy": url,
+              "HTTP_PROXY": url, "HTTPS_PROXY": url, "ALL_PROXY": url,
+              "no_proxy": NO_PROXY, "NO_PROXY": NO_PROXY}
+    st = _state_load() or win_capture_state()
+    st["applied_env"] = dict(values)
+    _state_save(st)
+    _env_write(values)
+    return "Windows 用户环境变量"
+
+
+def win_clear_terminal_proxy():
+    st = _state_load() or {}
+    applied = st.get("applied_env") or {}
+    if not applied:
+        return "未发现 NetPuff 写入的环境变量，未做改动"
+    removed = []
+    restore = {}
+    for name, value in applied.items():
+        cur = _env_read(name)
+        if not (cur.get("present") and str(cur.get("value")) == str(value)):
+            continue
+        saved = (st.get("env") or {}).get(name) or {}
+        if saved.get("present"):
+            restore[name] = saved["value"]
+        else:
+            removed.append(name)
+    if restore:
+        _env_write(restore)
+    _env_delete(removed)
+    st.pop("applied_env", None)
+    if st.get("applied"):
+        _state_save(st)
+    else:
+        _state_drop()
+    if len(removed) + len(restore) < len(applied):
+        return "已还原 %d 个；%d 个已被你改过，保留" % (
+            len(removed) + len(restore), len(applied) - len(removed) - len(restore))
+    return "Windows · 已还原 %d 个环境变量" % (len(removed) + len(restore))
+
+
+def socks4_probe(host, port, timeout=6):
+    """Windows 系统代理只会说 SOCKS4；写入前先确认服务器接受 SOCKS4。
+
+    这一步专门用来避免「SOCKS5 探针通了、系统层却连不上」的假成功。
+    """
+    s = socket.create_connection((normalize_host(host), int(port)), timeout=timeout)
+    try:
+        s.sendall(b"\x04\x01" + (80).to_bytes(2, "big")
+                  + socket.inet_aton("1.1.1.1") + b"\x00")
+        reply = _recv_exact(s, 8)
+        return len(reply) == 8 and reply[1] == 0x5A
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def ensure_windows_system_proxy(host, port, scheme):
+    if not IS_WIN:
+        return
+    if scheme == "https":
+        raise ConnectionError(
+            "Windows 系统代理不支持「TLS 连代理」；请改用 -p http 或 -p socks5")
+    if scheme == "socks5" and not socks4_probe(host, port):
+        raise ConnectionError(
+            "Windows 系统代理只支持 SOCKS4，但服务器 %s:%s 未通过 SOCKS4 握手；"
+            "系统级应用无法走代理。若只需要命令行，请加 -t（终端代理走 SOCKS5）。"
+            % (host, port))
+
+
+# ======================================================================
 # 终端代理（写入 shell 配置 / Windows 用户环境变量）
 # ======================================================================
 SHELL_RC = os.path.expanduser("~/.zshrc")
@@ -635,9 +950,10 @@ NO_PROXY = "localhost,127.0.0.1,::1,10.0.0.0/8,192.168.0.0/16,172.16.0.0/12"
 
 
 def _proxy_url(scheme, host, port):
+    addr = hostport(host, port)
     if scheme == "socks5":
-        return "socks5h://%s:%s" % (host, port)
-    return "http://%s:%s" % (host, port)  # http/https 代理在环境变量里都写 http://
+        return "socks5h://%s" % addr
+    return "http://%s" % addr  # http/https 代理在环境变量里都写 http://
 
 
 def _strip_marked_block(content):
@@ -701,9 +1017,7 @@ def set_terminal_proxy(host, port, scheme="socks5"):
             f.write(content)
         return path
     elif IS_WIN:
-        for var in ("http_proxy", "https_proxy", "all_proxy"):
-            subprocess.run(["setx", var, url], check=False)
-        return "Windows 用户环境变量"
+        return win_set_terminal_proxy(host, port, scheme)
     return ""
 
 
@@ -720,9 +1034,7 @@ def clear_terminal_proxy():
             f.write(content)
         return path
     elif IS_WIN:
-        for var in ("http_proxy", "https_proxy", "all_proxy"):
-            subprocess.run(["setx", var, ""], check=False)
-        return "Windows 用户环境变量"
+        return win_clear_terminal_proxy()
     return ""
 
 
@@ -754,55 +1066,63 @@ def cli():
     sub.add_parser("direct", help="查看当前直连出口 IP")
 
     args = p.parse_args()
+    if getattr(args, "host", None):
+        args.host = normalize_host(args.host)
 
-    if args.cmd == "test":
-        print("检测端口 %s:%s (%s) ..." % (args.host, args.port, args.protocol))
-        if not check_port_open(args.host, args.port):
-            print("✗ 端口未开放（代理服务可能没启动）")
-            sys.exit(1)
-        print("查询出口信息 ...")
-        info = fetch_exit_info(args.host, args.port, args.protocol)
-        print("✓ 出口 IP  : %s" % info["ip"])
-        print("  地理位置  : %s / %s / %s" % (info["country"], info["region"], info["city"]))
-        print("  ISP       : %s" % info["isp"])
-        print("  时区       : %s" % info["timezone"])
-        print("  延迟       : %d ms" % info["latency_ms"])
+    def _port_ok(value):
+        return str(value).isdigit() and 1 <= int(value) <= 65535
 
-    elif args.cmd == "connect":
-        if not check_port_open(args.host, args.port):
-            print("✗ 端口 %s:%s 未开放" % (args.host, args.port))
-            sys.exit(1)
-        info = fetch_exit_info(args.host, args.port, args.protocol)
-        where = set_system_proxy(args.host, args.port, args.protocol)
-        if getattr(args, "terminal", False):
-            where2 = set_terminal_proxy(args.host, args.port, args.protocol)
-            print("✓ 已开启系统代理（%s）" % where)
-            print("✓ 终端代理已写入（%s）" % where2)
+    try:
+        if args.cmd in ("test", "connect"):
+            if not _port_ok(args.port):
+                print("✗ 端口非法：%s（应为 1~65535 的数字）" % args.port)
+                sys.exit(2)
+            print("检测端口 %s:%s (%s) ..." % (args.host, args.port, args.protocol))
+            if not check_port_open(args.host, args.port):
+                print("✗ 端口未开放（代理服务可能没启动）")
+                sys.exit(1)
+            print("查询出口信息 ...")
+            info = fetch_exit_info(args.host, args.port, args.protocol)
+            print("✓ 出口 IP  : %s" % info["ip"])
+            print("  地理位置  : %s / %s / %s" % (info["country"], info["region"], info["city"]))
+            print("  ISP       : %s" % info["isp"])
+            print("  时区       : %s" % info["timezone"])
+            print("  延迟       : %d ms" % info["latency_ms"])
+            if args.cmd == "connect":
+                # 系统层和探针用的可能不是同一套协议（Windows 系统层只认 SOCKS4），
+                # 所以真正写注册表之前必须再确认一次。
+                ensure_windows_system_proxy(args.host, args.port, args.protocol)
+                where = set_system_proxy(args.host, args.port, args.protocol)
+                print("✓ 已开启系统代理（%s）" % where)
+                if getattr(args, "terminal", False):
+                    where2 = set_terminal_proxy(args.host, args.port, args.protocol)
+                    print("✓ 终端代理已写入（%s）" % where2)
+                add_history(args.host, args.port)
+
+        elif args.cmd == "disconnect":
+            where = clear_system_proxy()
+            where2 = clear_terminal_proxy()
+            print("✓ 已取消系统代理，恢复直连（%s）" % where)
+            print("✓ 已清除终端代理（%s）" % where2)
+
+        elif args.cmd == "direct":
+            info = fetch_direct_exit_info()
+            print("直连出口 IP : %s" % info["ip"])
+            print("地理位置     : %s / %s / %s" % (info["country"], info["region"], info["city"]))
+
+        elif args.cmd == "status":
+            enabled, server = get_proxy_status()
+            print("系统代理: %s" % ("开启" if enabled else "关闭"))
+            if enabled and server:
+                print("服务器: %s" % server)
         else:
-            clear_terminal_proxy()
-            print("✓ 已开启系统代理（%s）" % where)
-        add_history(args.host, args.port)
-        print("  出口 IP : %s（%s / %s / %s）" % (
-            info["ip"], info["country"], info["region"], info["city"]))
-
-    elif args.cmd == "disconnect":
-        where = clear_system_proxy()
-        where2 = clear_terminal_proxy()
-        print("✓ 已取消系统代理，恢复直连（%s）" % where)
-        print("✓ 已清除终端代理（%s）" % where2)
-
-    elif args.cmd == "direct":
-        info = fetch_direct_exit_info()
-        print("直连出口 IP : %s" % info["ip"])
-        print("地理位置     : %s / %s / %s" % (info["country"], info["region"], info["city"]))
-
-    elif args.cmd == "status":
-        enabled, server = get_proxy_status()
-        print("系统代理: %s" % ("开启" if enabled else "关闭"))
-        if server:
-            print("服务器: %s" % server)
-    else:
-        p.print_help()
+            p.print_help()
+    except ConnectionError as exc:
+        print("✗ %s" % exc)
+        sys.exit(3)
+    except Exception as exc:          # 参数层之外的所有异常都转成可读输出
+        print("✗ 操作失败：%s" % exc)
+        sys.exit(3)
 
 
 # ======================================================================
@@ -861,7 +1181,7 @@ def _ask_quit_macos(desc):
         return None
 
 
-def _ask_quit_windows(desc):
+def _ask_quit_windows(desc, parent=None):
     """Windows 原生 MessageBox。返回 QUIT_* 之一；无法显示时返回 None。"""
     title = "NetPuff — 系统代理仍在开启"
     msg = ("当前系统代理仍指向 %s。\n\n"
@@ -871,11 +1191,17 @@ def _ask_quit_windows(desc):
            "【取消】不退出" % desc)
     try:
         import ctypes
+        hwnd = 0
+        if parent is not None:
+            try:
+                hwnd = ctypes.windll.user32.GetAncestor(parent.winfo_id(), 2) or 0
+            except Exception:
+                hwnd = 0
         MB_YESNOCANCEL = 0x03
         MB_ICONWARNING = 0x30
         MB_SETFOREGROUND = 0x10000
         ret = ctypes.windll.user32.MessageBoxW(
-            0, msg, title, MB_YESNOCANCEL | MB_ICONWARNING | MB_SETFOREGROUND)
+            hwnd, msg, title, MB_YESNOCANCEL | MB_ICONWARNING | MB_SETFOREGROUND)
         return {6: QUIT_RESTORE, 7: QUIT_ONLY, 2: QUIT_CANCEL}.get(ret)
     except Exception:
         return None
@@ -898,7 +1224,7 @@ def _ask_quit_tk(desc):
         return QUIT_CANCEL
 
 
-def ask_quit_with_proxy(desc):
+def ask_quit_with_proxy(desc, parent=None):
     """「系统代理仍开启」时关闭窗口，询问用户如何处理。
 
     返回 QUIT_RESTORE / QUIT_ONLY / QUIT_CANCEL。
@@ -907,16 +1233,31 @@ def ask_quit_with_proxy(desc):
     if IS_MAC:
         got = _ask_quit_macos(desc)
     elif IS_WIN:
-        got = _ask_quit_windows(desc)
+        got = _ask_quit_windows(desc, parent)
     else:
         got = None
     return got if got is not None else _ask_quit_tk(desc)
+
+
+def _enable_windows_dpi():
+    """在 Tk 创建窗口之前声明 DPI 感知，避免 125%/150% 缩放下界面发虚。"""
+    if not IS_WIN:
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)   # Per-Monitor v2
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 
 def build_gui():
     import tkinter as tk
     from tkinter import ttk
 
+    _enable_windows_dpi()
     root = tk.Tk()
     root.title(APP_TITLE)
     root.geometry("500x565")
@@ -927,15 +1268,17 @@ def build_gui():
     msg_q = queue.Queue()
 
     style = ttk.Style()
-    try:
-        style.theme_use("aqua")
-    except Exception:
-        pass
+    for theme in (("vista", "winnative", "clam") if IS_WIN else ("aqua", "clam")):
+        try:
+            style.theme_use(theme)
+            break
+        except Exception:
+            continue
 
     pad = dict(padx=12, pady=6)
 
     # ---- 标题 ----
-    tk.Label(root, text="NetPuff", font=("Helvetica", 18, "bold")).pack(pady=(16, 2))
+    tk.Label(root, text="NetPuff", font=(UI_FONT, 18, "bold")).pack(pady=(16, 2))
     tk.Label(root, text="跨平台 · macOS / Windows", fg="#888888").pack()
 
     # ---- 合规提示（中英对照，置顶）----
@@ -943,7 +1286,7 @@ def build_gui():
     tk.Label(root,
              text="本软件仅供合法用途，禁止用于任何违法行为\n"
                   "For lawful use only. Use for illegal activity is prohibited.",
-             fg="#b03030", font=("Helvetica", 10), justify="center").pack(pady=(8, 0))
+             fg="#b03030", font=(UI_FONT, 10), justify="center").pack(pady=(8, 0))
 
     # ---- 表单 ----
     form = ttk.LabelFrame(root, text="代理服务器", padding=12)
@@ -974,12 +1317,16 @@ def build_gui():
 
     def refresh_history():
         entries = load_history()
-        ip_combo["values"] = ["%s:%s" % (e.get("ip"), e.get("port")) for e in entries]
+        ip_combo["values"] = [hostport(e.get("ip"), e.get("port")) for e in entries]
         return entries
 
     def on_history_select(_evt=None):
         val = ip_var.get().strip()
-        if ":" in val:
+        if val.startswith("[") and "]:" in val:
+            end = val.find("]:")
+            ip_var.set(val[1:end])
+            port_var.set(val[end + 2:].strip())
+        elif ":" in val:
             ip, port = val.rsplit(":", 1)
             ip_var.set(ip.strip())
             port_var.set(port.strip())
@@ -1003,12 +1350,13 @@ def build_gui():
 
     status_var = tk.StringVar(value="就绪")
     status_label = tk.Label(status_box, textvariable=status_var, anchor="w",
-                            font=("Helvetica", 13), fg="#888888")
+                            font=(UI_FONT, 13), fg="#888888")
     status_label.pack(fill="x")
 
     # ---- 底部取消按钮 ----
     cancel_btn = ttk.Button(root, text="取消代理 / 恢复直连")
     cancel_btn.pack(fill="x", padx=16, pady=(12, 16))
+    cancel_btn.config(state="disabled")   # 没连接时不该让人点
 
     ttk.Label(root, text="历史记录保存在 ~/.netpuff_history.json",
               foreground="#aaaaaa").pack(side="bottom", pady=(0, 8))
@@ -1063,11 +1411,10 @@ def build_gui():
             if not check_port_open(host, port):
                 raise ConnectionError("端口 %s 未开放（代理服务可能没启动）" % port)
             info = fetch_exit_info(host, port, scheme)
+            ensure_windows_system_proxy(host, port, scheme)
             where = set_system_proxy(host, port, scheme)
             if terminal:
                 set_terminal_proxy(host, port, scheme)
-            else:
-                clear_terminal_proxy()
             add_history(host, port)
             msg_q.put(("connect_ok", info, where, terminal))
         except Exception as e:
@@ -1080,9 +1427,13 @@ def build_gui():
         state["proxy_active"] = True
         connect_btn.config(state="normal")
         detail_btn.config(state="normal")
+        cancel_btn.config(state="normal")
         suffix = " · 终端代理已开启" if terminal else ""
         set_status("✓ 已连接 · 出口 %s · %s%s" % (info["country"], info["city"], suffix), "#1a8f3c")
-        note = "\n终端代理已写入 ~/.zshrc（新终端生效）" if terminal else ""
+        note = ""
+        if terminal:
+            note = ("\n终端代理已写入用户环境变量（新开终端生效）" if IS_WIN
+                    else "\n终端代理已写入 ~/.zshrc（新终端生效）")
         notify("代理连接成功", "出口 IP %s（%s / %s）%s" % (
             info["ip"], info["country"], info["city"], note))
 
@@ -1246,7 +1597,7 @@ def build_gui():
         host = str(detail.get("host") or "")
         port = str(detail.get("port") or "")
         desc = ("%s:%s" % (host, port)) if (host or port) else "系统代理"
-        choice = ask_quit_with_proxy(desc)
+        choice = ask_quit_with_proxy(desc, root)
         if choice == QUIT_RESTORE:
             _restore_now()          # 先恢复配置，再退出
             root.destroy()
