@@ -1476,6 +1476,14 @@ def build_gui():
     _enable_windows_dpi()
     root = tk.Tk()
     root.title(APP_TITLE)
+    if IS_WIN:
+        try:
+            icon = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "app", "netpuff.ico")
+            if os.path.exists(icon):
+                root.iconbitmap(default=icon)
+        except Exception:
+            pass
     root.geometry("520x650")
     root.minsize(480, 610)
 
