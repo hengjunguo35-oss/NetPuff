@@ -1484,8 +1484,8 @@ def build_gui():
                 root.iconbitmap(default=icon)
         except Exception:
             pass
-    root.geometry("520x650")
-    root.minsize(480, 610)
+    root.geometry("520x700")
+    root.minsize(480, 640)
 
     state = {"info": None, "working": False, "connecting": False,
              "proxy_active": False, "detected": False}
