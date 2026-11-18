@@ -7,6 +7,10 @@
 <sub>ℹ️ AI-translated from the Chinese original, provided for reference only.
 The Chinese version is authoritative.</sub>
 
+<p align="center">
+  <img src="app/netpuff-256.png" width="120" alt="NetPuff icon">
+</p>
+
 ---
 
 ## 1. What problem this solves
@@ -274,6 +278,30 @@ app ──HTTP CONNECT x.com:443──▶ 127.0.0.1:<random port>
 
 The cost: distribution requires Python (no single compiled binary like Swift/Go), though on
 macOS the `.app` shell wraps the Python call so the experience is identical.
+
+---
+
+### 3.4 Icon and visual assets
+
+<p align="center"><img src="app/netpuff-256.png" width="140" alt="NetPuff icon"></p>
+
+There are not several different images — it is **one icon at multiple resolutions**,
+picked per platform:
+
+| File | Sizes | Used by |
+|---|---|---|
+| `app/netpuff.ico` | 16 / 32 / 48 / 64 / 128 / 256 | Windows exe, installer, shortcuts, window icon |
+| `app/netpuff.icns` | 32 / 64 / 128 / 256 / 512 / 1024 | macOS `.app` (`CFBundleIconFile`) |
+| `app/netpuff-256.png` | 256 | macOS window icon (Tk `iconphoto`) |
+| `app/netpuff-512.png` | 512 | README, release page and docs |
+
+Conventions:
+
+- export new sizes from the **1024×1024 original**, never upscale a small one;
+- Windows picks the right ICO size automatically based on DPI;
+- Finder / Dock on macOS use the 128–1024 entries from the ICNS;
+- the in-app window icon uses the ICO on Windows and the 256 PNG on macOS (Retina);
+- replacing the four files updates the title bar, taskbar, desktop shortcut and installer.
 
 ---
 
