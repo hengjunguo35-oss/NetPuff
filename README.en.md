@@ -84,7 +84,7 @@ Build a double-clickable `.app`:
 
 Download from [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases):
 
-- **`NetPuff-1.2.0-Setup.exe`** — per-user installer (no admin), Start Menu shortcut;
+- **`NetPuff-1.2.1-Setup.exe`** — per-user installer (no admin), Start Menu shortcut;
 - **`NetPuff.exe`** — portable single file.
 
 Neither needs Python. Windows 10/11 x64.

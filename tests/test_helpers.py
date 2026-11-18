@@ -28,6 +28,25 @@ class HostPortTests(unittest.TestCase):
                          "socks=[::1]:1080")
 
 
+class SplitHostPortTests(unittest.TestCase):
+    def test_plain_host(self):
+        self.assertEqual(np.split_host_port("10.1.2.3", "2080"), ("10.1.2.3", "2080"))
+
+    def test_host_and_port(self):
+        self.assertEqual(np.split_host_port("10.1.2.3:1080", "2080"), ("10.1.2.3", "1080"))
+
+    def test_scheme_prefix(self):
+        self.assertEqual(np.split_host_port("socks5://10.1.2.3:1080", "2080"),
+                         ("10.1.2.3", "1080"))
+
+    def test_bracketed_ipv6_with_port(self):
+        self.assertEqual(np.split_host_port("[2408::1]:1080", "2080"),
+                         ("2408::1", "1080"))
+
+    def test_bare_ipv6_keeps_port(self):
+        self.assertEqual(np.split_host_port("2408::1", "2080"), ("2408::1", "2080"))
+
+
 class ReadBodyTests(unittest.TestCase):
     def test_content_length_stops_without_eof(self):
         a, b = socket.socketpair()

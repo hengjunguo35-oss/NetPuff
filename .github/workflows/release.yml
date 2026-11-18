@@ -51,25 +51,6 @@ jobs:
           hdiutil create -volname "NetPuff" -srcfolder dmg-root -ov -format UDZO "$DMG"
           ls -lh "$ZIP" "$DMG"
 
-      - name: 打包 Windows（功能未完善，供贡献者试用）
-        env:
-          V: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          ZIP="NetPuff-${V}-Windows.zip"
-          rm -f "$ZIP"   # zip 默认是「追加/更新」，必须先删除，否则旧条目会残留
-          # 保持与仓库一致的目录结构，这样启动脚本里的
-          # "..\src\netpuff.py" 相对路径才能正确解析
-          rm -rf win-pkg && mkdir -p win-pkg/NetPuff/src win-pkg/NetPuff/app
-          cp src/netpuff.py         win-pkg/NetPuff/src/
-          # 包内改用 ASCII 文件名：zip 规范里非 ASCII 名称的兼容性在 Windows 上
-          # 依赖 UTF-8 标志位，而 macOS 的 zip 并不设置它，会导致文件名乱码。
-          # 内容与相对路径均与 app/启动NetPuff.bat 完全一致。
-          cp app/启动NetPuff.bat     win-pkg/NetPuff/app/start-netpuff.bat
-          cp app/README-Windows.txt win-pkg/NetPuff/
-          (cd win-pkg && zip -r -X "../$ZIP" NetPuff)
-          ls -lh "$ZIP"
-
       - name: 生成校验和
         run: |
           set -euo pipefail

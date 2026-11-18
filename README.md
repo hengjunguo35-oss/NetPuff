@@ -56,7 +56,7 @@ NetPuff 只负责把「开关」拨到位，并用一个真实的请求替你验
 
 从 [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases) 下载：
 
-- **`NetPuff-1.2.0-Setup.exe`** —— 向导安装，按用户安装（无需管理员），自动建开始菜单快捷方式；
+- **`NetPuff-1.2.1-Setup.exe`** —— 向导安装，按用户安装（无需管理员），自动建开始菜单快捷方式；
 - **`NetPuff.exe`** —— 便携版，单文件双击即用。
 
 两者都**不需要安装 Python**。Windows 10/11 x64。

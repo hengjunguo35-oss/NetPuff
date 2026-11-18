@@ -4,7 +4,7 @@
 ;  产物：dist\NetPuff-<版本>-Setup.exe（按用户安装，无需管理员）
 ; ============================================================================
 #define MyAppName "NetPuff"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppExeName "NetPuff.exe"
 #define MyAppPublisher "hengjunguo35-oss"
 #define MyAppURL "https://github.com/hengjunguo35-oss/NetPuff"

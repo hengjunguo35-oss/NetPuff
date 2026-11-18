@@ -91,7 +91,7 @@ IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform.startswith("win")
 
 APP_TITLE = "NetPuff"
-APP_VERSION = "1.2.0"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
+APP_VERSION = "1.2.1"          # 唯一版本来源（与 CHANGELOG.md 保持一致）
 USER_AGENT = "%s/%s" % (APP_TITLE, APP_VERSION)
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_history.json")
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".netpuff_config.json")
@@ -409,6 +409,32 @@ def fetch_direct_exit_info():
     """直连查询本机出口 IP 与地理位置（用于取消代理后展示）。"""
     body = direct_http_get(GEO_API, timeout=10)
     return _parse_geo_json(body)
+
+
+TUNNEL_CHECK_URLS = (
+    "http://www.msftconnecttest.com/connecttest.txt",
+    "http://example.com/",
+)
+
+
+def probe_proxy_tunnel(host, port, scheme="socks5", timeout=8):
+    """只验证「代理隧道能不能出去」，不依赖 ip-api。
+
+    出口地理信息只是展示；ip-api 被墙、限流或返回非 JSON 时，
+    不应该因此拒绝一个本来可用的代理。
+    """
+    for url in TUNNEL_CHECK_URLS:
+        try:
+            if scheme == "socks5":
+                body = socks5_http_get(host, port, url, timeout=timeout)
+            else:
+                body = http_proxy_get(host, port, url, secure=(scheme == "https"),
+                                      timeout=timeout)
+            if body and body.strip():
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def get_local_ip():
@@ -769,11 +795,40 @@ def _broadcast_env():
 
 
 def normalize_host(host):
-    """把用户输入的 [IPv6] 或裸 IPv6 统一成不带方括号的形式。"""
+    """把用户输入的 [IPv6]、裸 IPv6 或带协议前缀的地址统一成纯主机名。"""
     h = str(host).strip()
+    for prefix in ("socks5h://", "socks5://", "http://", "https://"):
+        if h.lower().startswith(prefix):
+            h = h[len(prefix):]
+            break
     if h.startswith("[") and h.endswith("]"):
         return h[1:-1]
     return h
+
+
+def split_host_port(value, default_port=None):
+    """拆出主机与端口，兼容用户把 "IP:端口" 直接填进 IP 栏的常见写法。"""
+    raw = str(value or "").strip()
+    for prefix in ("socks5h://", "socks5://", "http://", "https://"):
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    if not raw:
+        return "", default_port
+    if raw.startswith("["):
+        end = raw.find("]")
+        if end > 0:
+            host = raw[1:end]
+            rest = raw[end + 1:]
+            if rest.startswith(":") and rest[1:].isdigit():
+                return host, rest[1:]
+            return host, default_port
+        return raw.strip("[]"), default_port
+    if raw.count(":") == 1:
+        host, _, port = raw.partition(":")
+        if port.isdigit():
+            return host, port
+    return raw, default_port
 
 
 def hostport(host, port):
@@ -1324,27 +1379,41 @@ def cli():
 
     args = p.parse_args()
     if getattr(args, "host", None):
-        args.host = normalize_host(args.host)
+        # 兼容用户把 "IP:端口"、"[IPv6]:端口" 或带协议前缀的地址填进 IP 栏。
+        args.host, args.port = split_host_port(args.host, getattr(args, "port", None))
 
     def _port_ok(value):
         return str(value).isdigit() and 1 <= int(value) <= 65535
 
     try:
         if args.cmd in ("test", "connect"):
+            if IS_WIN and args.protocol == "https":
+                print("✗ Windows 系统代理不支持「TLS 连代理」；请用 -p socks5 或 -p http")
+                sys.exit(2)
             if not _port_ok(args.port):
                 print("✗ 端口非法：%s（应为 1~65535 的数字）" % args.port)
                 sys.exit(2)
             print("检测端口 %s:%s (%s) ..." % (args.host, args.port, args.protocol))
             if not check_port_open(args.host, args.port):
-                print("✗ 端口未开放（代理服务可能没启动）")
+                print("✗ 端口未开放（IP 栏只填地址，端口填在端口参数；并确认代理服务已启动）")
                 sys.exit(1)
-            print("查询出口信息 ...")
-            info = fetch_exit_info(args.host, args.port, args.protocol)
-            print("✓ 出口 IP  : %s" % info["ip"])
-            print("  地理位置  : %s / %s / %s" % (info["country"], info["region"], info["city"]))
-            print("  ISP       : %s" % info["isp"])
-            print("  时区       : %s" % info["timezone"])
-            print("  延迟       : %d ms" % info["latency_ms"])
+            info = None
+            try:
+                print("查询出口信息 ...")
+                info = fetch_exit_info(args.host, args.port, args.protocol)
+            except Exception as exc:
+                # 出口查询只是展示；ip-api 被墙/限流时不应该阻止一个可用的代理。
+                if args.cmd == "connect" and probe_proxy_tunnel(
+                        args.host, args.port, args.protocol):
+                    print("⚠ 出口信息查询失败（%s），但代理隧道可用，继续连接" % exc)
+                else:
+                    raise
+            if info:
+                print("✓ 出口 IP  : %s" % info["ip"])
+                print("  地理位置  : %s / %s / %s" % (info["country"], info["region"], info["city"]))
+                print("  ISP       : %s" % info["isp"])
+                print("  时区       : %s" % info["timezone"])
+                print("  延迟       : %d ms" % info["latency_ms"])
             if args.cmd == "connect":
                 # 系统层和探针用的可能不是同一套协议（Windows 系统层只认 SOCKS4），
                 # 所以真正写注册表之前必须再确认一次。
@@ -1576,7 +1645,8 @@ def build_gui():
     ttk.Label(form, text="协议:").grid(row=2, column=0, sticky="w", **pad)
     scheme_var = tk.StringVar(value="socks5")
     scheme_combo = ttk.Combobox(form, textvariable=scheme_var, state="readonly",
-                                values=list(PROTOCOLS), width=12)
+                                values=[p for p in PROTOCOLS
+                                        if not (IS_WIN and p == "https")], width=12)
     scheme_combo.grid(row=2, column=1, sticky="w", **pad)
 
     terminal_var = tk.BooleanVar(value=bool(load_config().get("terminal_proxy", False)))
@@ -1681,8 +1751,15 @@ def build_gui():
         # 结果通过 msg_q 队列传回，再由 _poll()（root.after 定时轮询）回 UI 线程渲染。
         try:
             if not check_port_open(host, port):
-                raise ConnectionError("端口 %s 未开放（代理服务可能没启动）" % port)
-            info = fetch_exit_info(host, port, scheme)
+                raise ConnectionError(
+                    "端口 %s 未开放（IP 栏只填地址，端口填在端口栏）" % port)
+            info = None
+            try:
+                info = fetch_exit_info(host, port, scheme)
+            except Exception as exc:
+                # 出口查询失败不应阻断可用的代理
+                if not probe_proxy_tunnel(host, port, scheme):
+                    raise ConnectionError("代理不可用：%s" % exc)
             ensure_windows_system_proxy(host, port, scheme)
             where = set_system_proxy(host, port, scheme)
             if terminal:
@@ -1698,16 +1775,23 @@ def build_gui():
         state["info"] = info
         state["proxy_active"] = True
         connect_btn.config(state="normal")
-        detail_btn.config(state="normal")
+        detail_btn.config(state="normal" if info else "disabled")
         cancel_btn.config(state="normal")
         suffix = " · 终端代理已开启" if terminal else ""
-        set_status("✓ 已连接 · 出口 %s · %s%s" % (info["country"], info["city"], suffix), "#1a8f3c")
+        if info:
+            set_status("✓ 已连接 · 出口 %s · %s%s"
+                       % (info["country"], info["city"], suffix), "#1a8f3c")
+        else:
+            set_status("✓ 已连接（出口信息查询失败）%s" % suffix, "#1a8f3c")
         note = ""
         if terminal:
             note = ("\n终端代理已写入用户环境变量（新开终端生效）" if IS_WIN
                     else "\n终端代理已写入 ~/.zshrc（新终端生效）")
-        notify("代理连接成功", "出口 IP %s（%s / %s）%s" % (
-            info["ip"], info["country"], info["city"], note))
+        if info:
+            notify("代理连接成功", "出口 IP %s（%s / %s）%s" % (
+                info["ip"], info["country"], info["city"], note))
+        else:
+            notify("代理连接成功", "系统代理已写入，但出口信息查询失败%s" % note)
 
     def _connect_fail(msg):
         state["connecting"] = False
@@ -1717,13 +1801,21 @@ def build_gui():
         notify("代理连接失败", msg)
 
     def on_connect():
-        host = ip_var.get().strip()
-        port = port_var.get().strip()
+        raw = ip_var.get().strip()
+        host, embedded = split_host_port(raw, None)
+        port = embedded or port_var.get().strip()
         scheme = scheme_var.get().strip() or "socks5"
         terminal = terminal_var.get()
         save_config({"terminal_proxy": terminal})
+        if embedded:
+            port_var.set(embedded)
+        if host and host != raw:
+            ip_var.set(host)
         if not host:
             set_status("✗ 请填写服务器 IP", "#cc0000")
+            return
+        if IS_WIN and scheme == "https":
+            set_status("✗ Windows 不支持 TLS 连代理，请选 socks5 或 http", "#cc0000")
             return
         if not port.isdigit() or not (1 <= int(port) <= 65535):
             set_status("✗ 端口无效（1~65535）", "#cc0000")

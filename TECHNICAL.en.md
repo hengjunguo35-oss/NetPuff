@@ -1,6 +1,6 @@
 # NetPuff Technical Documentation
 
-> Version: `NetPuff` v1.2.0 · Platforms: macOS / Windows · Author: hengjunguo35-oss
+> Version: `NetPuff` v1.2.1 · Platforms: macOS / Windows · Author: hengjunguo35-oss
 >
 > 🌐 中文版：**[技术文档.md](技术文档.md)**
 

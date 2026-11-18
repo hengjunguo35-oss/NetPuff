@@ -7,6 +7,22 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.2.1] — 2026-11-18
+
+Fixes two common causes of "downloaded but cannot connect".
+
+- **The IP field now accepts `IP:port`**: previously it became `IP:port:port` and reported
+  "port not open". CLI and GUI both split it now, including `[IPv6]:port` and
+  `socks5://host:port`.
+- **A failed egress lookup no longer blocks connecting**: if ip-api is blocked, rate-limited
+  or returns non-JSON, NetPuff checks the proxy tunnel via NCSI / example.com and proceeds
+  when the tunnel works, showing "egress lookup failed".
+- **`https` is no longer offered on Windows**: WinINet has no TLS-to-proxy concept; the GUI
+  hides it and the CLI returns a clear error.
+- The "port not open" message now says to put only the address in the IP field.
+- The release pipeline no longer builds the old source `Windows.zip`; Windows ships only the
+  installer and the portable exe.
+
 ## [1.2.0] — 2026-11-18
 
 Windows hardening: compatibility mode by default, snapshot before writing, exact restore on
