@@ -70,6 +70,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.parse
 
 try:                    # winreg 只在 Windows 上存在，macOS 导入会失败
@@ -1055,6 +1056,15 @@ def _bridge_read_head(client):
     return data
 
 
+def _bridge_log(msg):
+    try:
+        path = os.path.join(os.environ.get("TEMP", "."), "netpuff_bridge.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
 def _bridge_handle(client, upstream_host, upstream_port):
     try:
         client.settimeout(20)
@@ -1098,6 +1108,7 @@ def _bridge_handle(client, upstream_host, upstream_port):
 
         client.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
     except Exception:
+        _bridge_log("handle error:\n" + traceback.format_exc())
         try:
             client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
         except Exception:
@@ -1114,6 +1125,9 @@ def bridge_main(listen_port, upstream_host, upstream_port):
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", int(listen_port)))
     srv.listen(64)
+    _bridge_log("bridge start port=%s upstream=%s:%s frozen=%s"
+                % (listen_port, upstream_host, upstream_port,
+                   getattr(sys, "frozen", False)))
     while True:
         conn, _ = srv.accept()
         threading.Thread(target=_bridge_handle,
@@ -1145,8 +1159,15 @@ def _bridge_start(host, port):
         cmd = [_bridge_exe(), os.path.abspath(__file__), "_bridge",
                str(listen_port), host, str(port)]
     flags = 0x00000008 | 0x08000000 if IS_WIN else 0   # DETACHED | NO_WINDOW
+    # PyInstaller onefile 的子进程会继承父进程的临时解压目录；父进程退出后目录被删，
+    # 子进程再 import 就会找不到 base_library.zip。清掉这些继承变量让它自己解压。
+    env = os.environ.copy()
+    for name in list(env):
+        if name.startswith("_PYI") or name == "_MEIPASS2":
+            env.pop(name, None)
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, creationflags=flags)
+                            stderr=subprocess.DEVNULL, creationflags=flags,
+                            env=env)
     deadline = time.time() + 6
     while time.time() < deadline:
         try:

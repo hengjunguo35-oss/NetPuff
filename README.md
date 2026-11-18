@@ -42,7 +42,7 @@ NetPuff 只负责把「开关」拨到位，并用一个真实的请求替你验
 ## 环境要求
 
 - macOS 10.13+（主要支持平台）
-- Windows 10+（Python 3.10+ 本身已不支持 Windows 7；系统层需要服务器兼容 SOCKS4）
+- Windows 10/11 x64（安装包 / 便携版**不需要 Python**；源码运行需 Python 3.10+）
 - 一个带 **tkinter** 的 Python 3（3.10 / 3.11 / 3.12 均可）
   - macOS 建议用 [python.org](https://www.python.org/downloads/) 的安装包（自带 Tcl/Tk）
   - Windows 安装时务必勾选 **"Add python.exe to PATH"**
@@ -132,11 +132,15 @@ python3 src/netpuff.py direct                  # 查看本机直连出口 IP
 
 所有验证都不依赖第三方测试框架（零依赖原则同样适用于测试），可自行复现。
 
-**1. 语法与静态检查**
+**1. 单元与不变式测试**
 
 ```bash
-python3 -m py_compile src/netpuff.py
+python3 -m unittest discover -s tests -v
 ```
+
+共 12 项：注册表快照/还原、二次连接不覆盖快照、环境变量归属与恢复、
+IPv6 地址格式、HTTP 正文读取。Windows 注册表测试写在影子键
+`HKCU\Software\NetPuff\Test\...` 里，不碰你的真实配置。
 
 **2. 命令行全路径**
 
@@ -146,11 +150,9 @@ python3 -m py_compile src/netpuff.py
 
 **3. 协议端到端（本地闭环，无需真实代理）**
 
-`tools/` 下有两个最小测试服务端，用于在没有真实代理时验证客户端实现：
-
 ```bash
-# 终端 A：最小 SOCKS5 服务端（无认证 + 域名转发）
-python3 tools/socks5-test-server.py 11080
+# 终端 A：SOCKS4/4a/5 测试服务端（兼容模式的系统层也需要 SOCKS4）
+python3 tools/socks45-test-server.py 11080
 
 # 终端 B：最小 HTTP 代理服务端（绝对 URI 形式）
 python3 tools/http-test-server.py 11081
@@ -160,16 +162,13 @@ python3 src/netpuff.py test 127.0.0.1 11080            # SOCKS5 路径
 python3 src/netpuff.py test 127.0.0.1 11081 -p http    # HTTP 代理路径
 ```
 
-预期：两条都返回出口 IP、地理位置、ISP 与时延；服务端不打印任何错误。
+**4. 实机验证**
 
-**4. 改写用户配置的安全性**
+- macOS + Python 3.11（Tk 9.0）：GUI、连接/断开、退出保护。
+- Windows 11 + Python 3.14（Tk 9.0）：GUI、注册表写入/还原、兼容模式
+  （系统层实际打开 x.com / google.com）、环境变量精确还原。
 
-`set_terminal_proxy()` / `clear_terminal_proxy()` 会改写 `~/.zshrc`。验证时请把
-`SHELL_RC` 指向临时文件，确认四点：标记块写入正确、用户原有内容零改动、
-重复写入不产生重复块、清除后可完全还原。
-
-> 已验证环境：macOS + Python 3.11（Tk 9.0）。
-> Windows 分支尚未充分实机验证——`tools/` 里的测试同样可在 Windows 上运行，欢迎补充结果。
+> 「断开后与连接前逐项一致」是硬指标：注册表四项 + 8 个环境变量。
 
 ---
 
@@ -191,11 +190,17 @@ python3 src/netpuff.py test 127.0.0.1 11081 -p http    # HTTP 代理路径
 ```
 src/netpuff.py                全部逻辑（单文件，逐函数带批注）
 app/启动NetPuff.command        macOS 双击启动脚本
-app/启动NetPuff.bat            Windows 双击启动脚本
-app/build-app.sh              打包成 NetPuff.app
-app/README-Windows.txt        Windows 发行包内说明（功能未完善）
-tools/socks5-test-server.py   最小 SOCKS5 测试服务端（验证用）
-tools/http-test-server.py     最小 HTTP 代理测试服务端（验证用）
+app/启动NetPuff.bat            Windows 源码启动脚本
+app/build-app.sh               打包成 NetPuff.app（含图标）
+app/netpuff.ico/.icns/.png     Windows / macOS 图标与窗口图标
+app/installer.iss              Windows 安装包（Inno Setup）
+app/version_info.txt           Windows exe 版本信息
+app/README-Windows.txt         Windows 发行包内说明
+tests/                         12 项测试（影子键 + 不变式）
+tools/socks45-test-server.py   SOCKS4/4a/5 测试服务端
+tools/socks5-test-server.py   最小 SOCKS5 测试服务端
+tools/http-test-server.py     最小 HTTP 代理测试服务端
+.github/workflows/            CI、macOS 发行、Windows 构建
 ```
 
 ## 隐私

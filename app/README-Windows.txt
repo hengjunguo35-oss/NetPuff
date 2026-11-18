@@ -1,152 +1,103 @@
-NetPuff — Windows 版说明
-=========================
+NetPuff — Windows 版说明（v1.2.0）
+==================================
 
-⚠️  功能尚未完善，不建议日常使用。
+安装包与便携版不需要安装 Python。
 
-为什么仍然提供这个包？
-----------------------
-为了让开发者能够直接解压、运行、修改并提交贡献。
-Windows 相关代码集中在 src/netpuff.py 的 IS_WIN 分支：
+功能
+----
+* 一键连接 / 断开，支持 SOCKS5 / HTTP；连接前先探测出口（IP、国家、城市、ISP、延迟）。
+* **兼容模式（默认开启）**：Windows 系统代理只认 SOCKS4，且要求在本地解析域名；
+  NetPuff 在本机 127.0.0.1 起一个 HTTP→SOCKS5 转换器，系统代理指向本机，
+  域名交给上游解析——被墙站点（x.com、google.com 等）也能打开。
+  只监听本机回环，断开时自动停止；`NETPUFF_NO_BRIDGE=1` 可关闭（退回纯 SOCKS4）。
+* 写入前备份注册表四项与 8 个环境变量；断开时只还原仍属于 NetPuff 的值，
+  期间被用户改过的项保留并提示。没有备份时只关开关，绝不猜用户原来的地址。
+* 退出保护：代理仍开启时关闭窗口会弹系统对话框（恢复直连 / 仅退出 / 取消）。
+* 启动自检：打开即检测系统代理，回填地址并显示当前出口。
+* 内网直连：自动写入 ProxyOverride（<local> 与 10/172.16-31/192.168 网段）。
+* 终端代理：写 8 个环境变量（含 no_proxy），只清理自己写入且未被改动的值。
 
-    set_system_proxy()          / clear_system_proxy()
-    set_terminal_proxy()        / clear_terminal_proxy()
-    get_proxy_status()          / get_proxy_detail()
-    _win_refresh()              （ctypes 调 Wininet 的 InternetSetOption）
-    on_close() 的 Windows 分支   （ctypes MessageBoxW 退出确认框）
-
-启动脚本：app/start-netpuff.bat
-（包内使用 ASCII 文件名，以规避 Windows 上 zip 中文名的编码问题；
-  仓库中对应 app/启动NetPuff.bat，内容完全相同）
-
-已知问题
---------
-1. **Windows 兼容模式（默认开启）。** Windows 系统代理只认 SOCKS4，且要求在本地解析
-   域名；NetPuff 会在本机 127.0.0.1 启动一个 HTTP→SOCKS5 转换器，系统代理指向本机，
-   域名交给上游解析，被墙站点也能打开。它只监听本机回环，断开时自动停止；
-   设置环境变量 `NETPUFF_NO_BRIDGE=1` 可关闭（关闭后需要服务器自身兼容 SOCKS4）。
-2. 系统代理依赖 IE 设置：只有遵循系统代理的程序才会生效
-   （Chrome / Edge 会；Firefox 默认不跟随；部分原生程序不遵循）。
-   这是 Windows 平台的固有局限，不是本程序的 bug。
-3. 终端代理只对「新开的」终端生效，已打开的终端不会自动重读环境变量。
-4. 退出保护与启动自检已实现，但仍建议先在真实环境完整验收。
-
-运行前提
---------
-* 安装包 / 便携版：Windows 10 / 11 x64，**不需要安装 Python**。
-* 从源码运行：Python 3.10+，安装时勾选 "Add python.exe to PATH"。
-* 零第三方依赖：只用 Python 标准库；tkinter 需随 Python 一并安装
-  （python.org 的官方安装包默认包含）。
-
-界面行为（设计上与 macOS 一致，但 Windows 上未实测）
---------------------------------------------------
-* **退出保护**：系统代理仍开启时关闭窗口，会弹出系统级确认框——
-    【是】恢复直连后退出
-    【否】仅退出软件，保留代理
-    【取消】不退出
-  代理已经关掉时不会弹窗。
-* **启动自检**：打开软件会自动扫描系统代理。若仍在代理，状态栏直接显示
-  「⚠ 正在代理」并回填检测到的地址，点下方「取消代理 / 恢复直连」即可关闭。
+安装
+----
+推荐：双击 NetPuff-1.2.0-Setup.exe（按用户安装，无需管理员，自动建开始菜单快捷方式）。
+便携：双击 NetPuff.exe，无需安装。
+从源码：需要 Python 3.10+，双击 app\start-netpuff.bat。
 
 使用
 ----
 安装版：从开始菜单或桌面启动 NetPuff。
-便携版：双击 NetPuff.exe（无需安装）。
+便携版：双击 NetPuff.exe。
 源码运行：双击 app\start-netpuff.bat（需要 Python）。
 
-或命令行：
+填服务器 IP / 端口 → 协议选 socks5 → 「连接代理」；
+成功后状态栏显示出口国家与城市；「取消代理 / 恢复直连」恢复。
+
+命令行（源码版）：
     python src\netpuff.py status                 查看系统代理状态
     python src\netpuff.py test  <IP> [端口]       只测试代理，不改系统设置
     python src\netpuff.py connect <IP> [端口] [-t] 测试并开启系统代理
     python src\netpuff.py disconnect             恢复直连
     python src\netpuff.py direct                 查看本机直连出口 IP
 
+已知限制
+--------
+1. 系统代理只影响遵循 IE / WinINet 设置的程序（Chrome / Edge 会；Firefox 默认不跟随；
+   部分原生程序不遵循）。这是 Windows 平台的固有局限，不是本程序 bug。
+2. `-p https` 在 Windows 不支持：WinINet 没有「TLS 连代理」概念，请用 socks5 或 http。
+3. 终端代理只对**新开的**终端生效，已打开的终端不会自动重读环境变量。
+4. 安装包与 exe 未做代码签名，SmartScreen 可能提示「未知发布者」；
+   点「更多信息 → 仍要运行」即可。
+5. 兼容模式会在本机回环内转发（127.0.0.1），不经过第三方。
+
+排错
+----
+* 端口未开放：代理服务没启动或 IP 变了，先 `test <IP>`。
+* 换网络后连不上：内网代理 IP 会变，更新为当前网段的地址。
+* 浏览器打不开被墙站点：确认兼容模式未被 `NETPUFF_NO_BRIDGE=1` 关闭；
+  少数程序不遵循系统代理，需要单独配置。
+* 关掉软件后代理还开着：退出时选了「仅退出软件」。重新打开会自动识别，
+  点「取消代理 / 恢复直连」即可。
+
 参与贡献
 --------
 仓库：https://github.com/hengjunguo35-oss/NetPuff
+问题反馈请附：Windows 版本、是否为安装版/便携版、复现步骤与完整报错。
 
-发现 bug 或有改进想法，欢迎开 Issue，并请附上：
-  * Windows 版本（如 Windows 11 23H2）
-  * Python 版本（python --version）
-  * 复现步骤与实际现象（含完整报错信息）
-
-本项目不提供代理服务、不承载任何流量、不内置任何节点；
-它连接的是你自己提供的代理服务器。仅供合法用途，请遵守当地法律法规。
-详见仓库中的 LICENSE（MIT）与免责声明。
-
+本程序不提供代理服务、不中转第三方流量、不内置任何节点；
+它连接的是你自己提供的代理服务器。仅供合法用途，详见 LICENSE（MIT）与免责声明。
 
 ================================================================================
-NetPuff — Windows build
+NetPuff — Windows build (v1.2.0)
 ================================================================================
+No Python runtime is required for the installer or the portable exe.
 
-⚠️  NOT yet complete — not recommended for daily use.
+Features
+--------
+* One-click connect/disconnect with SOCKS5 or HTTP, egress probe before applying.
+* Compatibility mode (on by default): Windows only speaks SOCKS4 and resolves DNS
+  locally, so blocked domains fail. NetPuff runs a local HTTP→SOCKS5 bridge on
+  127.0.0.1; the system proxy points to it and the upstream resolves host names.
+  Loopback only, stopped on disconnect; disable with NETPUFF_NO_BRIDGE=1.
+* Snapshot before writing: four registry values and eight environment variables are
+  restored exactly on disconnect; values changed by the user are preserved.
+* Quit protection, startup self-check, ProxyOverride for private ranges, and a
+  terminal proxy that only removes the variables it wrote.
 
-Why is this package provided?
------------------------------
-So that developers can unzip it, run it, patch it, and submit changes.
-The Windows-specific code lives in the IS_WIN branches of src/netpuff.py:
+Install
+-------
+Recommended: NetPuff-1.2.0-Setup.exe (per-user, no admin, Start Menu shortcut).
+Portable: NetPuff.exe, double-click to run.
+From source: Python 3.10+, double-click app\start-netpuff.bat.
 
-    set_system_proxy()          / clear_system_proxy()
-    set_terminal_proxy()        / clear_terminal_proxy()
-    get_proxy_status()          / get_proxy_detail()
-    _win_refresh()              (calls Wininet InternetSetOption via ctypes)
-    the Windows branch of on_close()  (ctypes MessageBoxW quit confirmation)
+Known limitations
+-----------------
+1. Only programs that follow IE/WinINet settings are affected (Chrome/Edge do;
+   Firefox does not by default).
+2. `-p https` is unsupported on Windows (no TLS-to-proxy concept in WinINet).
+3. Terminal proxy only affects newly opened terminals.
+4. Unsigned build: SmartScreen may warn; choose "More info → Run anyway".
+5. Compatibility mode relays locally on 127.0.0.1 only.
 
-Launcher: app/start-netpuff.bat
-(An ASCII filename is used inside the package to avoid zip filename-encoding problems on
- Windows. The equivalent file in the repository is app/启动NetPuff.bat — identical contents.)
-
-Known issues
-------------
-1. **This Windows build has NOT been functionally tested on real hardware.** Registry
-   read/write, the Wininet refresh, `setx` environment variables, and the native quit
-   confirmation (MessageBoxW) have only passed static checks and the CI smoke tests
-   (syntax, CLI, SOCKS5/HTTP end-to-end, `.bat` line endings) — **they have never been
-   exercised end-to-end on a real Windows desktop**. Treat this as a trial build.
-2. System SOCKS relies on IE settings: only programs that follow the system proxy are
-   affected (Chrome / Edge do; Firefox does not by default; some native apps do not).
-   This is an inherent Windows-platform limitation, not a bug in this program.
-3. The terminal proxy only affects *newly opened* terminals; already-open ones will not
-   re-read the environment variables.
-
-Requirements
-------------
-* Python 3 installed (3.10 / 3.11 / 3.12), with "Add python.exe to PATH" ticked
-  during installation.
-* Zero third-party dependencies: Python standard library only. tkinter must be present
-  (the official python.org installer includes it by default).
-
-UI behaviour (designed to match macOS, but untested on Windows)
---------------------------------------------------------------
-* **Quit protection**: closing the window while the system proxy is still on raises a
-  native confirmation dialog —
-    【Yes】restore direct connection, then quit
-    【No】quit only, keep the proxy
-    【Cancel】stay in the app
-  No dialog appears when the proxy is already off.
-* **Startup self-check**: the app scans the system proxy on launch. If a proxy is still
-  active, the status bar shows "⚠ proxying", the detected address is filled in, and the
-  "cancel proxy / restore direct" button disables it in one click.
-
-Usage
------
-Double-click   app\start-netpuff.bat
-
-Or from the command line:
-    python src\netpuff.py status                   show system proxy state
-    python src\netpuff.py test  <IP> [port]        test the proxy only
-    python src\netpuff.py connect <IP> [port] [-t] test and enable the system proxy
-    python src\netpuff.py disconnect               restore direct connection
-    python src\netpuff.py direct                   show your real direct egress IP
-
-Contributing
-------------
 Repository: https://github.com/hengjunguo35-oss/NetPuff
-
-Bug reports and ideas are welcome — please open an Issue and include:
-  * your Windows version (e.g. Windows 11 23H2)
-  * your Python version (`python --version`)
-  * reproduction steps and the actual behaviour, including the full error output
-
-This program provides no proxy service, carries no traffic, and bundles no nodes; it
-connects to a proxy server that you supply yourself. For lawful use only — please comply
-with the laws of your country/region. See LICENSE (MIT) and the disclaimer in the repository.
+This program provides no proxy service and bundles no nodes; you connect to your own
+proxy server. For lawful use only. See LICENSE (MIT) and the disclaimer.

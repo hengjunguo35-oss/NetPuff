@@ -10,9 +10,11 @@ The Chinese version is authoritative.</sub>
 > ⚠️ **For personal study, research, and communication only.** Please read the
 > [Disclaimer](DISCLAIMER.en.md) and [LICENSE](LICENSE) (MIT) before use.
 
-> ⚠️ **Windows support is not yet complete — not recommended for use.** The Windows branch
-> (registry + Wininet) has not been fully verified on real hardware and may have
-> compatibility issues. If you need it, feel free to fork the code and adapt it yourself.
+> ⚠️ **Windows uses a compatibility mode by default.** Windows' system proxy only speaks
+> SOCKS4 and resolves DNS locally; NetPuff runs a local HTTP→SOCKS5 bridge on `127.0.0.1`
+> so the upstream resolves host names and blocked sites (x.com, google.com) work through
+> the system proxy. Loopback only; stopped on disconnect. Set `NETPUFF_NO_BRIDGE=1` to
+> fall back to plain SOCKS4.
 
 A small tool that toggles between direct connection and a proxy with one click. Fill in
 your proxy server address, click connect, and it verifies the proxy actually works and
@@ -21,7 +23,8 @@ from the command line.
 
 **It does not relay any traffic** — the actual egress is your own internal SOCKS5 server.
 NetPuff only flips the switch and proves to you, with a real request, that it was flipped
-correctly.
+correctly. (Windows compatibility mode only converts protocols on `127.0.0.1`; nothing
+goes through a third party.)
 
 ---
 
@@ -33,7 +36,7 @@ correctly.
 | Three protocols | SOCKS5 / HTTP / HTTPS (SOCKS5 by default) |
 | Verify before applying | Probes the proxy with a real request before touching system config |
 | Egress visibility | Shows egress IP, country/region/city, ISP, latency |
-| System proxy | macOS `networksetup`; Windows registry + Wininet refresh |
+| System proxy | macOS `networksetup`; Windows registry + local HTTP→SOCKS5 bridge (compatibility mode) |
 | Terminal proxy | Also sets `http_proxy` etc. so curl / pip / git go through the proxy |
 | Direct confirmation | After disconnect, queries your real egress IP |
 | History | Remembers past IPs in a dropdown |
@@ -48,11 +51,10 @@ nodes. You connect to *your own* proxy.
 ## Requirements
 
 - macOS 10.13+ (the primary supported platform)
-- Windows 7+ — **not yet complete, not recommended for use** (see
-  [TECHNICAL.en.md · Known limitations](TECHNICAL.en.md))
-- Python 3 with **tkinter** (3.10 / 3.11 / 3.12)
+- Windows 10/11 x64 — the installer and portable exe need **no Python**
+- Python 3.10+ with **tkinter** (only when running from source; tested on 3.14 / Tk 9.0)
   - macOS: prefer the [python.org](https://www.python.org/downloads/) installer (bundles Tcl/Tk)
-  - Windows: make sure to tick **"Add python.exe to PATH"** during install
+  - Windows: tick **"Add python.exe to PATH"** during install
 - **Zero third-party dependencies** — Python standard library only
 
 ---
@@ -78,16 +80,19 @@ Build a double-clickable `.app`:
 ./app/build-app.sh          # produces NetPuff.app
 ```
 
-### Windows
+### Windows (installer or portable)
 
-> ⚠️ **Not yet complete — not recommended for use.** The following is for reference only;
-> it has not been fully verified on real hardware. Feel free to fork and adapt the code.
+Download from [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases):
 
-```
-double-click  app\启动NetPuff.bat
-```
+- **`NetPuff-1.2.0-Setup.exe`** — per-user installer (no admin), Start Menu shortcut;
+- **`NetPuff.exe`** — portable single file.
 
-> Requires `python` or `pythonw` on PATH (tick "Add python.exe to PATH" when installing).
+Neither needs Python. Windows 10/11 x64.
+
+> Compatibility mode is on by default: a local HTTP→SOCKS5 bridge on `127.0.0.1`, stopped on
+> disconnect, so blocked sites work through the system proxy.
+
+From source: double-click `app\启动NetPuff.bat` (requires Python on PATH).
 
 ---
 

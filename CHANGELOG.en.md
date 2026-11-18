@@ -9,7 +9,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [1.2.0] — 2026-11-18
 
-Windows hardening: snapshot before writing, exact restore on disconnect, plus a SOCKS4 preflight.
+Windows hardening: compatibility mode by default, snapshot before writing, exact restore on
+disconnect, plus release packaging.
 
 - **Windows compatibility mode (on by default)**: WinINet speaks SOCKS4 only and resolves
   host names locally, so poisoned DNS yields wrong IPs. When connecting through SOCKS5,
@@ -22,10 +23,10 @@ Windows hardening: snapshot before writing, exact restore on disconnect, plus a 
   `~/.netpuff_win_state.json`. Disconnect restores only values that are still ours;
   anything you changed meanwhile is left alone with a notice. Without a snapshot it only
   turns the switch off and **never guesses your original address**.
-- **SOCKS4 preflight**: Windows' system layer (WinINet) only speaks SOCKS4; a PAC that
-  returns SOCKS5 is silently ignored and falls back to DIRECT. NetPuff now probes SOCKS4
-  before writing the registry and fails with a clear message if it is unsupported
-  (`-t` still gives you terminal-only proxying).
+- **SOCKS4 preflight (when compatibility mode is off)**: WinINet only speaks SOCKS4; a PAC
+  returning SOCKS5 is silently ignored and falls back to DIRECT. With
+  `NETPUFF_NO_BRIDGE=1`, NetPuff probes SOCKS4 before writing the registry and fails with a
+  clear message if it is unsupported.
 - **ProxyOverride**: `<local>` plus private ranges (`10.*`, `172.16.*`–`172.31.*`,
   `192.168.*`; this field supports wildcards only, not CIDR), merged with your existing
   entries and restored on disconnect.

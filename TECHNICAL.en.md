@@ -1,6 +1,6 @@
 # NetPuff Technical Documentation
 
-> Version: `NetPuff` v1.0.0 · Platforms: macOS / Windows · Author: hengjunguo35-oss
+> Version: `NetPuff` v1.2.0 · Platforms: macOS / Windows · Author: hengjunguo35-oss
 >
 > 🌐 中文版：**[技术文档.md](技术文档.md)**
 
@@ -94,13 +94,18 @@ Two things worth noting:
    hardcoding `Wi-Fi` would configure the wrong one. So `mac_primary_service()` first finds
    the default route's interface, then maps it back to the service name.
 
-**Windows — registry + Wininet refresh**
+**Windows — registry + local compatibility bridge + Wininet refresh**
 
 ```
 HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings
     ProxyEnable  = 1
-    ProxyServer  = "socks=192.168.1.100:2080"
+    ProxyServer  = "http=127.0.0.1:<port>;https=127.0.0.1:<port>"
 ```
+
+Compatibility mode is on by default (see 2.8): WinINet only speaks SOCKS4 and resolves DNS
+locally, so poisoned domains fail. NetPuff runs a local HTTP→SOCKS5 bridge; HTTPS uses
+CONNECT so the upstream resolves host names. Set `NETPUFF_NO_BRIDGE=1` to write a static
+`socks=host:port` instead (the server must then accept SOCKS4).
 
 Changing the registry alone isn't enough — running programs won't re-read it. You must
 broadcast two events via Wininet:
@@ -137,7 +142,9 @@ Subtle details:
 - **Marked-block deletion**: on disconnect, only the block between the markers is removed,
   **never touching the user's other .zshrc config**.
 
-On Windows, `setx` writes user environment variables (equivalent effect; no rc-file concept).
+On Windows, eight variables (including upper/lower case and `no_proxy`) are written to
+`HKCU\Environment` and `WM_SETTINGCHANGE` is broadcast; cleanup only removes values NetPuff
+wrote and restores the user's previous values. `setx` is no longer used.
 
 ### 2.5 GUI: bridging a single-threaded UI and background networking
 
@@ -199,6 +206,39 @@ This is exactly the complement to "quit only" chosen above: when you later want 
 off, reopen the app, see the current state, and restore with one click instead of digging
 through System Settings.
 
+### 2.7 Windows state management: snapshot, write, exact restore
+
+Registry values and environment variables are not exclusively NetPuff's, so the Windows
+branch is a state machine, not a bare switch:
+
+1. **Snapshot before writing**: `ProxyEnable / ProxyServer / ProxyOverride /
+   AutoConfigURL` plus eight proxy environment variables go to
+   `~/.netpuff_win_state.json`. If the snapshot cannot be written, nothing is changed.
+2. **Idempotent**: a second `connect` reuses the original snapshot as long as the current
+   values are still the ones we wrote.
+3. **Restore only what is still ours**: on disconnect, values you changed in the meantime
+   are left alone and reported.
+4. **No snapshot → only turn the switch off**: never guess the user's previous address.
+5. **Terminal variables** live in `HKCU\Environment` with a `WM_SETTINGCHANGE` broadcast;
+   only NetPuff-written values are removed and user values are restored.
+
+### 2.8 Windows compatibility mode: local HTTP→SOCKS5
+
+WinINet only speaks SOCKS4, and SOCKS4 resolves host names locally; poisoned domains yield
+wrong IPs. Instead of changing Windows, NetPuff performs one protocol conversion locally:
+
+```
+app ──HTTP CONNECT x.com:443──▶ 127.0.0.1:<random port>
+                                  │
+                                  └──SOCKS5 (host name)──▶ upstream proxy ──▶ target
+```
+
+- the system proxy is `http=127.0.0.1:<port>;https=127.0.0.1:<port>`;
+- the bridge is started as a detached process by `connect` and stopped by `disconnect`;
+- it listens on `127.0.0.1` only and needs no third-party dependency;
+- cost: one extra loopback hop (no third party involved);
+- disable it with `NETPUFF_NO_BRIDGE=1` to fall back to plain SOCKS4.
+
 ---
 
 ## 3. Technology choices
@@ -210,7 +250,7 @@ through System Settings.
 | **Python 3** | All logic (GUI + CLI + network + platform adaptation) |
 | **tkinter** | GUI (stdlib) |
 | **socket / ssl** | raw-socket SOCKS5 / HTTP proxy probing |
-| **subprocess** | calls `networksetup` / `route` / `setx` |
+| **subprocess** | calls `networksetup` / `route` / launches the local bridge |
 | **winreg / ctypes** | Windows registry & Wininet refresh |
 | **zsh / cmd scripts** | macOS `.command` and Windows `.bat` launchers |
 
@@ -244,7 +284,7 @@ macOS the `.app` shell wraps the Python call so the experience is identical.
 | Item | Requirement |
 |---|---|
 | macOS | 10.13+ (`networksetup` has existed for ages; older untested) |
-| Windows | 7+ |
+| Windows | 10/11 x64 (installer and portable exe need no Python) |
 | Python | 3.10 / 3.11 / 3.12, with tkinter |
 | Dependencies | none |
 
@@ -296,13 +336,11 @@ Fill IP / port → pick protocol → (optional) tick "also set terminal proxy" �
 
 ## 6. Known limitations
 
-1. **Windows support is not yet complete — not recommended for use**: the Windows branch is
-   implemented (registry `Internet Settings` + Wininet refresh + `setx` env vars) but has
-   **not been fully verified on real hardware** and may have compatibility issues. It is
-   **not recommended for use on Windows** at this time. If you need it, feel free to fork
-   and adapt the code — the relevant parts are the `IS_WIN` branches of
-   `set_system_proxy()` / `clear_system_proxy()` and `set_terminal_proxy()` /
-   `clear_terminal_proxy()`.
+1. **Windows' system layer only speaks SOCKS4**: both static proxy and PAC implement
+   SOCKS4 only; a PAC returning `SOCKS5 host:port` is ignored and falls back to DIRECT.
+   The default **compatibility mode** (local HTTP→SOCKS5 bridge, see 2.8) solves this;
+   only when it is disabled does the server need to accept SOCKS4. The terminal proxy
+   always uses `socks5h://` (remote DNS).
 2. **Windows system SOCKS relies on IE settings**: only programs that follow the system
    proxy are affected (Chrome/Edge do; Firefox doesn't by default; some native apps don't).
    This is an inherent Windows-platform limitation, not a bug.
@@ -313,6 +351,10 @@ Fill IP / port → pick protocol → (optional) tick "also set terminal proxy" �
    internal proxy).
 6. **The probe is plain HTTP**: the egress query goes to `http://ip-api.com` (free, rate-
    limited), not HTTPS — but it carries nothing sensitive beyond your egress info.
+7. **`-p https` is unsupported on Windows**: WinINet has no TLS-to-proxy concept; use
+   `-p socks5` or `-p http`.
+8. **Compatibility mode relays on loopback**: it only listens on `127.0.0.1`, but it is
+   still a local relay; disable it with `NETPUFF_NO_BRIDGE=1`.
 
 ---
 
