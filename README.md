@@ -66,8 +66,9 @@ NetPuff 只负责把「开关」拨到位，并用一个真实的请求替你验
 
 ### macOS
 
-从 [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases) 下载 `.dmg`（推荐）
-或 `-macOS.zip`，取出 `NetPuff.app` 拖进「应用程序」。
+从 [Releases](https://github.com/hengjunguo35-oss/NetPuff/releases) 下载 `-macOS.zip`，
+解压得到 `NetPuff.app`，拖进「应用程序」。
+（`.dmg` 只在 macOS 上手动构建时提供，不是每次都有。）
 
 需要 Python 3.10–3.13（含 `tkinter` ≥ 8.6），不打包 Python 运行时。
 首次打开被 Gatekeeper 拦截时：右键 App → 打开 → 再点「打开」。

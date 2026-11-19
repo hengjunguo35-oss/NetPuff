@@ -37,8 +37,8 @@ Windows 系统代理只认 SOCKS4、且本地解析域名；兼容模式在本�
 |---|---|---|
 | **NetPuff-{{VERSION}}-Setup.exe** | Windows | **推荐**：向导安装，按用户安装（无需管理员），自动建开始菜单快捷方式 |
 | NetPuff.exe | Windows | 便携版：单文件，双击即用，不需要安装 Python |
-| **NetPuff-{{VERSION}}.dmg** | macOS | **推荐**：双击打开后把 App 拖进「应用程序」（由 CI 在 macOS 上构建） |
-| NetPuff-{{VERSION}}-macOS.zip | macOS | 备用：解压即得 `NetPuff.app` |
+| **NetPuff-{{VERSION}}-macOS.zip** | macOS | **推荐**：解压即得 `NetPuff.app`，拖进「应用程序」 |
+| NetPuff-{{VERSION}}.dmg | macOS | 可选：由 macOS 上的手动 Release 工作流生成，不是每次都有 |
 | SHA256SUMS.txt | — | 校验和：`shasum -a 256 -c SHA256SUMS.txt` |
 
 **Windows 要求**：Windows 10/11 x64；安装包与便携版**不需要安装 Python**。
@@ -72,7 +72,8 @@ NetPuff {{VERSION}} fixes the two most common "downloaded but cannot connect" ca
 - clearer "port not open" guidance; the obsolete source `Windows.zip` is gone.
 
 Windows ships `NetPuff-{{VERSION}}-Setup.exe` and portable `NetPuff.exe` (no Python needed);
-macOS ships `NetPuff-{{VERSION}}.dmg` and `NetPuff-{{VERSION}}-macOS.zip`.
+macOS ships `NetPuff-{{VERSION}}-macOS.zip`; a `.dmg` is optional and only produced by a
+manual macOS run.
 
 ---
 

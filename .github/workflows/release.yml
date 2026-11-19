@@ -1,12 +1,9 @@
 name: Release
 
-# 推一个 v* 的 tag 即自动构建 macOS / Windows 发行包并发布。
-# 使用仓库自带的 GITHUB_TOKEN，无需任何额外密钥。
+# 手动触发：在 macOS 机器上构建 dmg / zip，并补传到已有 Release。
+# 常规发行（含 Windows 安装包与 macOS zip）由 windows-build.yml 完成，不依赖 macOS 机器。
 # 冒烟检查（含真实 Windows 环境）在 ci.yml 中，推 main 或提 PR 时即会运行。
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -78,17 +75,10 @@ jobs:
           V: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          FILES="$(ls NetPuff-*.zip NetPuff-*.dmg SHA256SUMS.txt)"
+          FILES="$(ls NetPuff-*.zip NetPuff-*.dmg)"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            # 已存在：只在还没有产物时补传。重跑工作流通常只是为了刷新说明，
-            # 若连产物一起覆盖，已经发布出去的 SHA256 校验和就会被无声改掉。
-            HAVE="$(gh release view "$TAG" --json assets -q '.assets | length')"
-            if [ "$HAVE" = "0" ]; then
-              echo "产物为空，上传"
-              gh release upload "$TAG" $FILES --clobber
-            else
-              echo "产物已存在（$HAVE 个），跳过上传以保持校验和不变"
-            fi
+            # 已存在：补传 macOS 产物（覆盖同名文件），校验和由 windows-build.yml 统一生成
+            gh release upload "$TAG" $FILES --clobber
             gh release edit "$TAG" --notes-file RELEASE_NOTES.md
           else
             gh release create "$TAG" $FILES \

@@ -1,8 +1,8 @@
 name: Windows Build
 
-# 构建 Windows 单文件 exe 与 Inno Setup 安装包。
+# 构建 Windows exe / 安装包，并顺带生成 macOS .app 的 zip（不依赖 macOS 机器）。
 # - 手动触发：只上传 Actions 工件
-# - 推 v* tag：等 Release 创建后，把 exe 与安装包附加到 Release
+# - 推 v* tag：自己创建 Release 并上传全部资产（含校验和）
 on:
   workflow_dispatch:
   push:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: 构建 Windows 安装包
+    name: 构建发行包
     runs-on: windows-latest
     steps:
       - name: 检出代码
@@ -42,25 +42,47 @@ jobs:
         shell: pwsh
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" app\installer.iss'
 
+      - name: 构建 macOS 应用包（跨平台）
+        run: python tools/build-mac-package.py
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: NetPuff-Windows
+          name: NetPuff-Release
           path: |
             dist/NetPuff.exe
             dist/NetPuff-*-Setup.exe
+            dist/NetPuff-*-macOS.zip
 
-      - name: 附加到 Release
+      - name: 生成校验和
+        shell: pwsh
+        run: |
+          $files = @("dist\NetPuff.exe") +
+                   @(Get-ChildItem "dist\NetPuff-*-Setup.exe").FullName +
+                   @(Get-ChildItem "dist\NetPuff-*-macOS.zip").FullName
+          $lines = foreach ($f in $files) {
+            "$((Get-FileHash $f -Algorithm SHA256).Hash.ToLower())  $(Split-Path $f -Leaf)"
+          }
+          $lines | Set-Content "dist\SHA256SUMS.txt" -Encoding ASCII
+          Get-Content "dist\SHA256SUMS.txt"
+
+      - name: 创建 Release 并上传
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          for ($i = 0; $i -lt 60; $i++) {
-            gh release view $tag *> $null
-            if ($LASTEXITCODE -eq 0) { break }
-            Start-Sleep -Seconds 10
+          $ver = (Select-String -Path "src\netpuff.py" -Pattern 'APP_VERSION = "([^"]+)"').Matches.Groups[1].Value
+          (Get-Content ".github\release-notes.md" -Raw).Replace('{{VERSION}}', $ver) |
+            Set-Content "RELEASE_NOTES.md" -Encoding UTF8
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "NetPuff $ver" --notes-file "RELEASE_NOTES.md"
           }
-          $setup = (Get-ChildItem "dist\NetPuff-*-Setup.exe" | Select-Object -First 1).FullName
-          gh release upload $tag "dist\NetPuff.exe" $setup --clobber
+          $assets = @("dist\NetPuff.exe") +
+                    @(Get-ChildItem "dist\NetPuff-*-Setup.exe").FullName +
+                    @(Get-ChildItem "dist\NetPuff-*-macOS.zip").FullName +
+                    @("dist\SHA256SUMS.txt")
+          gh release upload $tag @assets --clobber
+          gh release edit $tag --notes-file "RELEASE_NOTES.md"
